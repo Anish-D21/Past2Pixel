@@ -120,3 +120,99 @@ def generate_synthetic_manuscript_sample(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(output_path)
     return output_path
+
+
+def load_vedo_records(split: str = "all", dataset_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """
+    Parses VedoOCR expert annotations and returns structured metadata.
+    
+    Args:
+        split: 'all', 'train', 'val', or 'test'.
+        dataset_dir: Optional override for the dataset directory.
+        
+    Returns:
+        List of dicts containing image_path, page_num, line_num, transcription,
+        document_id, source_page, and bounding box coordinates.
+    """
+    import csv
+
+    base_dir = dataset_dir or settings.VEDO_CONTENT_DIR
+    if not base_dir.exists():
+        return []
+
+    if split in ["train", "val", "test"]:
+        tsv_path = base_dir / "splits" / f"{split}.tsv"
+        if not tsv_path.exists():
+            tsv_path = base_dir / "master.tsv"
+    else:
+        tsv_path = base_dir / "master.tsv"
+
+    if not tsv_path.exists():
+        # Fallback to searching any tsv in the directory
+        found_tsvs = list(base_dir.rglob("*.tsv"))
+        if found_tsvs:
+            tsv_path = found_tsvs[0]
+        else:
+            return []
+
+    records = []
+    with open(tsv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            crop_rel = row.get("crop_path", "").strip()
+            img_path = base_dir / crop_rel
+            if not img_path.exists():
+                # Try finding under line_crops directly
+                alt_path = base_dir / "line_crops" / Path(crop_rel).name
+                if alt_path.exists():
+                    img_path = alt_path
+
+            p_num = int(row.get("page_num", 0)) if row.get("page_num", "").isdigit() else 0
+            l_num = int(row.get("line_num", 0)) if row.get("line_num", "").isdigit() else 0
+
+            records.append({
+                "image_path": img_path,
+                "exists": img_path.exists(),
+                "page_num": p_num,
+                "line_num": l_num,
+                "document_id": f"page{p_num:03d}" if p_num else Path(crop_rel).stem.split("_")[0],
+                "transcription": row.get("transcription", "").strip(),
+                "label": row.get("label", "Sanskrit Text"),
+                "source_page": row.get("source_page_image", ""),
+                "bbox": [
+                    int(row.get("x0", 0)),
+                    int(row.get("y0", 0)),
+                    int(row.get("x1", 0)),
+                    int(row.get("y1", 0)),
+                ] if "x0" in row and row.get("x0", "").isdigit() else None,
+            })
+
+    return records
+
+
+class VedoOCRDataset(Dataset):
+    """
+    Dataset wrapper for VedoOCR paired image crops and expert ground-truth transcriptions.
+    Used for OCR validation and Sanskrit text evaluation.
+    """
+
+    def __init__(self, split: str = "all", dataset_dir: Optional[Path] = None):
+        self.records = [r for r in load_vedo_records(split=split, dataset_dir=dataset_dir) if r["exists"]]
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        rec = self.records[idx]
+        with Image.open(rec["image_path"]) as img:
+            img_rgb = img.convert("RGB")
+
+        return {
+            "image": img_rgb,
+            "image_path": str(rec["image_path"]),
+            "transcription": rec["transcription"],
+            "page_num": rec["page_num"],
+            "line_num": rec["line_num"],
+            "document_id": rec["document_id"],
+        }
+

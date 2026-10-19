@@ -3,36 +3,106 @@
     "name": "VedoOCR \u2014 Vedic Sanskrit Manuscript OCR Dataset",
     "source_url": "https://www.kaggle.com/datasets/suyashkumarbhagat/vedocr-vedic-sanskrit-manuscript-ocr-dataset",
     "intended_role": "Source manuscript images, character/word visual patterns, baseline OCR evaluation, and source for controlled synthetic degradation pairs.",
+    "task_support": {
+      "ocr": {
+        "classification": "Directly supported by verified data",
+        "evidence": "681 line crops from 57 ancient pages paired with expert ground-truth transcriptions in master.tsv and splits/*.tsv."
+      },
+      "image_restoration": {
+        "classification": "Usable after preprocessing or adaptation",
+        "evidence": "Provides authentic Vedic manuscript images as targets for controlled synthetic degradation. Genuine paired degraded/clean manuscript scans do not exist in the raw dataset."
+      },
+      "damage_detection": {
+        "classification": "Usable after preprocessing or adaptation",
+        "evidence": "Supports synthetic damage detection by generating exact pixel-level masks during controlled degradation. Raw data has no physical damage annotations."
+      },
+      "missing_text_prediction": {
+        "classification": "Usable after preprocessing or adaptation",
+        "evidence": "Supplies 41,286 Vedic character transcriptions and 87 grapheme classes for n-gram character/word language model training."
+      }
+    },
     "inspection": {
-      "status": "EMPTY_DIRECTORY",
-      "directory": "D:\\Desktop\\Past2Pixel\\data\\raw\\vedo_ocr",
-      "image_count": 0,
-      "annotation_file_count": 0,
-      "subdirectories": [],
-      "image_extensions_found": {},
-      "sample_info": null
+      "status": "AVAILABLE",
+      "directory": "C:\\Users\\Jitesh\\Desktop\\DL Project\\Past2Pixel\\data\\raw\\VedoOCR",
+      "image_count": 1365,
+      "annotation_file_count": 9,
+      "subdirectories": [
+        "VedOCR_kaggle_release"
+      ],
+      "image_extensions_found": {
+        ".png": 1365
+      },
+      "sample_info": {
+        "sample_filename": "page002_line001.png",
+        "dimensions": [
+          1535,
+          149
+        ],
+        "mode": "RGB",
+        "format": "PNG"
+      }
     }
   },
   "dataset_b_sanskrit_hindi_vqa": {
     "name": "Sanskrit and Hindi OCR VQA Dataset",
     "source_url": "https://www.kaggle.com/datasets/xtreammachinelearner/sanskrit-and-hindi-ocr-vqa-dataset?select=Dataset",
     "intended_role": "Document images and textual Q&A annotations for contextual text prediction and Devanagari OCR evaluation.",
+    "task_support": {
+      "ocr": {
+        "classification": "Directly supported by verified data",
+        "evidence": "6,666 word/phrase images paired with ground-truth Devanagari text files across train (5,000), val (600), and test (1,066) splits."
+      },
+      "image_restoration": {
+        "classification": "Not supported by the inspected data",
+        "evidence": "Contains clean word/scene crops and VQA photos, not paired degraded/clean historical manuscript folios. Can only serve as secondary synthetic source images."
+      },
+      "damage_detection": {
+        "classification": "Not supported by the inspected data",
+        "evidence": "No damage masks, bounding boxes, or degradation labels exist in this dataset."
+      },
+      "missing_text_prediction": {
+        "classification": "Directly supported by verified data",
+        "evidence": "16,752 question-answer sentence triples and 6,666 OCR transcriptions in Hindi and Sanskrit supply extensive Devanagari vocabulary for context prediction."
+      }
+    },
     "inspection": {
-      "status": "EMPTY_DIRECTORY",
-      "directory": "D:\\Desktop\\Past2Pixel\\data\\raw\\sanskrit_hindi_vqa",
-      "image_count": 0,
-      "annotation_file_count": 0,
-      "subdirectories": [],
-      "image_extensions_found": {},
-      "sample_info": null
+      "status": "AVAILABLE",
+      "directory": "C:\\Users\\Jitesh\\Desktop\\DL Project\\Past2Pixel\\data\\raw\\sanskrit_hindi_ocr_vqa",
+      "image_count": 23418,
+      "annotation_file_count": 40171,
+      "subdirectories": [
+        "Dataset"
+      ],
+      "image_extensions_found": {
+        ".jpg": 23418
+      },
+      "sample_info": {
+        "sample_filename": "1.jpg",
+        "dimensions": [
+          775,
+          293
+        ],
+        "mode": "RGB",
+        "format": "JPEG"
+      }
     }
   },
   "synthetic_data": {
     "name": "Past2Pixel Controlled Synthetic Degradation Pairs",
     "intended_role": "Clean vs Degraded training pairs with ground-truth damage masks.",
+    "task_support": {
+      "image_restoration": {
+        "classification": "Directly supported by verified data",
+        "evidence": "Synthetic pipeline generates aligned clean and degraded image pairs with mathematical ground truth for PSNR/SSIM evaluation."
+      },
+      "damage_detection": {
+        "classification": "Directly supported by verified data",
+        "evidence": "Exact pixel-level binary masks generated for all injected stains, tears, fading, and noise, enabling IoU and Dice metric evaluation."
+      }
+    },
     "inspection": {
       "status": "EMPTY_DIRECTORY",
-      "directory": "D:\\Desktop\\Past2Pixel\\data\\synthetic",
+      "directory": "C:\\Users\\Jitesh\\Desktop\\DL Project\\Past2Pixel\\data\\synthetic",
       "image_count": 0,
       "annotation_file_count": 0,
       "subdirectories": [],

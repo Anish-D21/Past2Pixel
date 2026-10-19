@@ -208,6 +208,42 @@ def run_smoke_test():
     except Exception as e:
         test_results.append(("9. End-to-End RestorationEngine Execution", "FAIL", str(e)))
 
+    # Test 10: Real Dataset Loaders & Image Decoding
+    try:
+        from src.data.vedo_dataset import load_vedo_records, VedoOCRDataset
+        from src.data.sanskrit_hindi_dataset import SanskritHindiOCRDataset
+
+        # Verify VedoOCR real records
+        vedo_records = load_vedo_records("test")
+        assert len(vedo_records) > 0, "No VedoOCR test records found"
+        vedo_ds = VedoOCRDataset("test")
+        v_sample = vedo_ds[0]
+        assert v_sample["image"].size[0] > 0 and v_sample["image"].size[1] > 0
+        assert len(v_sample["transcription"]) > 0
+
+        # Verify real Vedo image with ManuscriptPairDataset (synthetic degradation on real manuscript)
+        real_crops = [r["image_path"] for r in vedo_records[:3]]
+        pair_ds = ManuscriptPairDataset(real_crops, target_size=(256, 256), seed=42)
+        pair_item = pair_ds[0]
+        assert pair_item["degraded"].shape == (3, 256, 256)
+        assert pair_item["clean"].shape == (3, 256, 256)
+        assert pair_item["damage_mask"].shape == (1, 256, 256)
+
+        # Verify Sanskrit-Hindi OCR real dataset
+        vqa_ocr_ds = SanskritHindiOCRDataset("test", max_count=5)
+        assert len(vqa_ocr_ds) > 0, "No Sanskrit-Hindi OCR test samples found"
+        s_sample = vqa_ocr_ds[0]
+        assert s_sample["image"].size[0] > 0
+        assert len(s_sample["text"]) > 0
+
+        test_results.append((
+            "10. Real Dataset Loaders & Image Decoding",
+            "PASS",
+            f"VedoOCR: {len(vedo_records)} test lines, VQA-OCR: {len(vqa_ocr_ds.samples)} verified samples",
+        ))
+    except Exception as e:
+        test_results.append(("10. Real Dataset Loaders & Image Decoding", "FAIL", str(e)))
+
     # Print Summary Table
     print("\n" + "=" * 70)
     print(f"{'TEST COMPONENT':<45} | {'STATUS':<6} | {'DETAILS'}")

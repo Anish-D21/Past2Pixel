@@ -25,12 +25,38 @@ class Settings:
     @property
     def VEDO_DATASET_DIR(self) -> Path:
         p = os.getenv("VEDO_DATASET_DIR")
-        return Path(p) if p else self.RAW_DATA_DIR / "vedo_ocr"
+        if p:
+            return Path(p)
+        for candidate in ["VedoOCR", "VedOCR", "vedo_ocr"]:
+            cand = self.RAW_DATA_DIR / candidate
+            if cand.exists():
+                return cand
+        return self.RAW_DATA_DIR / "VedoOCR"
+
+    @property
+    def VEDO_CONTENT_DIR(self) -> Path:
+        """Resolves to the directory containing line_crops, master.tsv, etc."""
+        base = self.VEDO_DATASET_DIR
+        nested = base / "VedOCR_kaggle_release"
+        return nested if nested.exists() else base
 
     @property
     def SANSKRIT_HINDI_DATASET_DIR(self) -> Path:
         p = os.getenv("SANSKRIT_HINDI_DATASET_DIR")
-        return Path(p) if p else self.RAW_DATA_DIR / "sanskrit_hindi_vqa"
+        if p:
+            return Path(p)
+        for candidate in ["sanskrit_hindi_ocr_vqa", "Sanskrit & Hindi OCR + VQA", "sanskrit_hindi_vqa"]:
+            cand = self.RAW_DATA_DIR / candidate
+            if cand.exists():
+                return cand
+        return self.RAW_DATA_DIR / "sanskrit_hindi_ocr_vqa"
+
+    @property
+    def SANSKRIT_HINDI_CONTENT_DIR(self) -> Path:
+        """Resolves to the directory containing train/val/test splits."""
+        base = self.SANSKRIT_HINDI_DATASET_DIR
+        nested = base / "Dataset"
+        return nested if nested.exists() else base
 
     @property
     def SYNTHETIC_DATA_DIR(self) -> Path:
