@@ -1,0 +1,43 @@
+{
+  "dataset_a_vedo_ocr": {
+    "name": "VedoOCR \u2014 Vedic Sanskrit Manuscript OCR Dataset",
+    "source_url": "https://www.kaggle.com/datasets/suyashkumarbhagat/vedocr-vedic-sanskrit-manuscript-ocr-dataset",
+    "intended_role": "Source manuscript images, character/word visual patterns, baseline OCR evaluation, and source for controlled synthetic degradation pairs.",
+    "inspection": {
+      "status": "EMPTY_DIRECTORY",
+      "directory": "D:\\Desktop\\Past2Pixel\\data\\raw\\vedo_ocr",
+      "image_count": 0,
+      "annotation_file_count": 0,
+      "subdirectories": [],
+      "image_extensions_found": {},
+      "sample_info": null
+    }
+  },
+  "dataset_b_sanskrit_hindi_vqa": {
+    "name": "Sanskrit and Hindi OCR VQA Dataset",
+    "source_url": "https://www.kaggle.com/datasets/xtreammachinelearner/sanskrit-and-hindi-ocr-vqa-dataset?select=Dataset",
+    "intended_role": "Document images and textual Q&A annotations for contextual text prediction and Devanagari OCR evaluation.",
+    "inspection": {
+      "status": "EMPTY_DIRECTORY",
+      "directory": "D:\\Desktop\\Past2Pixel\\data\\raw\\sanskrit_hindi_vqa",
+      "image_count": 0,
+      "annotation_file_count": 0,
+      "subdirectories": [],
+      "image_extensions_found": {},
+      "sample_info": null
+    }
+  },
+  "synthetic_data": {
+    "name": "Past2Pixel Controlled Synthetic Degradation Pairs",
+    "intended_role": "Clean vs Degraded training pairs with ground-truth damage masks.",
+    "inspection": {
+      "status": "EMPTY_DIRECTORY",
+      "directory": "D:\\Desktop\\Past2Pixel\\data\\synthetic",
+      "image_count": 0,
+      "annotation_file_count": 0,
+      "subdirectories": [],
+      "image_extensions_found": {},
+      "sample_info": null
+    }
+  }
+}
