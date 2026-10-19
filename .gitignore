@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+
+# PyTorch Checkpoints & Artifacts
+*.pt
+*.pth
+*.ckpt
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Datasets & Processed Media
+data/raw/*
+!data/raw/.gitkeep
+data/synthetic/*
+!data/synthetic/.gitkeep
+data/splits/*
+!data/splits/.gitkeep
+data/samples/*
+!data/samples/.gitkeep
+*.zip
+*.tar.gz
+
+# Environment & Credentials
+.env
+.env.local
+kaggle.json
+*.pem
+*.key
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Test & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
