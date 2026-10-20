@@ -23,7 +23,7 @@
     },
     "inspection": {
       "status": "AVAILABLE",
-      "directory": "C:\\Users\\Jitesh\\Desktop\\DL Project\\Past2Pixel\\data\\raw\\VedoOCR",
+      "directory": "data\\raw\\VedoOCR",
       "image_count": 1365,
       "annotation_file_count": 9,
       "subdirectories": [
@@ -67,7 +67,7 @@
     },
     "inspection": {
       "status": "AVAILABLE",
-      "directory": "C:\\Users\\Jitesh\\Desktop\\DL Project\\Past2Pixel\\data\\raw\\sanskrit_hindi_ocr_vqa",
+      "directory": "data\\raw\\sanskrit_hindi_ocr_vqa",
       "image_count": 23418,
       "annotation_file_count": 40171,
       "subdirectories": [
@@ -102,7 +102,7 @@
     },
     "inspection": {
       "status": "EMPTY_DIRECTORY",
-      "directory": "C:\\Users\\Jitesh\\Desktop\\DL Project\\Past2Pixel\\data\\synthetic",
+      "directory": "data\\synthetic",
       "image_count": 0,
       "annotation_file_count": 0,
       "subdirectories": [],

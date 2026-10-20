@@ -1,4 +1,7 @@
+
+# ==========================================
 # Python
+# ==========================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,39 +23,63 @@ wheels/
 .installed.cfg
 *.egg
 
+
+# ==========================================
 # Virtual Environments
+# ==========================================
 .venv/
 env/
 venv/
 ENV/
 
+
+# ==========================================
 # PyTorch Checkpoints & Artifacts
+# ==========================================
 *.pt
 *.pth
 *.ckpt
 checkpoints/*
 !checkpoints/.gitkeep
 
+
+# ==========================================
 # Datasets & Processed Media
+# ==========================================
 data/raw/*
 !data/raw/.gitkeep
+
 data/synthetic/*
 !data/synthetic/.gitkeep
+
 data/splits/*
 !data/splits/.gitkeep
+
 data/samples/*
 !data/samples/.gitkeep
+
+data/sessions/*
+!data/sessions/.gitkeep
+
+# Generated archives
 *.zip
 *.tar.gz
 
+
+# ==========================================
 # Environment & Credentials
+# ==========================================
 .env
-.env.local
+.env.*
+!.env.example
 kaggle.json
 *.pem
 *.key
 
-# IDE & OS
+
+# ==========================================
+# IDE & Operating System
+# ==========================================
 .vscode/
 .idea/
 *.swp
@@ -62,7 +89,25 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# Test & Coverage
+
+# ==========================================
+# Tests & Coverage
+# ==========================================
 .pytest_cache/
 .coverage
 htmlcov/
+coverage.xml
+
+
+# ==========================================
+# Logs & Temporary Files
+# ==========================================
+*.log
+*.tmp
+*.temp
+
+
+# ==========================================
+# Local Database & Runtime Artifacts
+# ==========================================
+data/sessions/local_db.json

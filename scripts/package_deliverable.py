@@ -10,6 +10,7 @@ def create_phase_archive(phase_name: str = "phase1"):
     included = [
         "src",
         "scripts",
+        "tests",
         "docs",
         "requirements.txt",
         ".env.example",

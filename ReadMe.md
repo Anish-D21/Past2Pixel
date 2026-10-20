@@ -15,60 +15,58 @@ The system strictly distinguishes between four separate tasks:
 
 ## Four-Phase Roadmap
 - **[x] PHASE 1 — AI Core, Datasets, Damage Detection, and Restoration Engine (Completed)**
-- **[ ] PHASE 2 — Backend, OCR, Database, Authentication, and Text Prediction**
+- **[x] PHASE 2 — Backend, OCR, Database, Authentication, and Text Prediction (Completed)**
 - **[ ] PHASE 3 — Frontend and Complete User Workflow**
 - **[ ] PHASE 4 — Session-Aware Reporting, Integration, Testing, and Final Polish**
 
 ---
 
-## Phase 1 Architecture & Implemented Modules
-```
-src/
-├── core/
-│   ├── config.py                 # Centralized configuration & settings
-│   └── device.py                 # Compute hardware detection & timer
-├── data/
-│   ├── synthetic_degradation.py  # Degradation pipeline & damage mask generator
-│   ├── data_split.py             # Zero-leakage document ID splitter
-│   ├── dataset_inventory.py      # Dataset A & B auditor
-│   ├── vedo_dataset.py           # Dataset A loader & synthetic sample generator
-│   └── sanskrit_hindi_dataset.py # Dataset B loader & vocabulary extractor
-├── models/
-│   ├── autoencoder.py            # Convolutional Autoencoder baseline
-│   ├── unet_restoration.py       # Primary U-Net restoration network
-│   ├── unet_damage_detector.py   # U-Net damage segmentation & overlay generator
-│   └── model_registry.py         # Model lifecycle & checkpoint manager
-├── metrics/
-│   ├── restoration_metrics.py    # PSNR & SSIM on valid reference pairs
-│   └── damage_metrics.py         # IoU, Dice, Precision, and Recall
-├── prediction/
-│   └── context_predictor.py      # N-gram LM, CER, and WER metrics
-└── pipeline/
-    └── restoration_engine.py     # Integrated Phase 1 execution engine
-```
-
----
-
-## Quickstart & Verification (Windows CPU)
+## Backend & API Usage (FastAPI)
 
 ### 1. Requirements Installation
 ```powershell
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
 
-### 2. Run Complete CPU Verification Suite
+### 2. Configure Environment Variables
+Copy `.env.example` to `.env`:
+```powershell
+Copy-Item .env.example .env
+```
+*(Optional: add your MongoDB Atlas URI into `MONGODB_URI`. If left blank, the backend automatically uses durable local file persistence).*
+
+### 3. Launch the Backend Server
+```powershell
+uvicorn src.api.app:app --host 127.0.0.1 --port 8000 --reload
+```
+Once started, explore the interactive API documentation:
+- **Swagger UI:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- **ReDoc:** [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
+
+---
+
+## Testing & Verification
+
+### Run Phase 2 Backend Automated Suite (18 Tests)
+```powershell
+python -m pytest tests/ -v
+```
+
+### Run Phase 1 Deep Learning Verification Suite (10 Tests)
 ```powershell
 python scripts/smoke_test.py
 ```
 
-### 3. Check Dataset Inventory
+### Run Dataset Inventory Audit
 ```powershell
 python -c "from src.data.dataset_inventory import print_dataset_inventory_summary; print_dataset_inventory_summary()"
 ```
 
-### 4. GPU Training (For Friend's Machine)
-If you want to train high-epoch models on your friend's GPU machine:
-1. Refer to [`docs/GPU_TRAINING_GUIDE.md`](file:///d:/Desktop/Past2Pixel/docs/GPU_TRAINING_GUIDE.md).
+---
+
+## GPU Training (For High-Epoch Models)
+If you want to train high-epoch models on a CUDA-enabled GPU:
+1. Refer to [`docs/GPU_TRAINING_GUIDE.md`](file:///c:/Users/Jitesh/Desktop/DL%20Project/Past2Pixel/docs/GPU_TRAINING_GUIDE.md).
 2. Run `run_gpu_training.bat` or `python scripts/train_restoration.py --device cuda`.
-3. Copy the resulting `.pt` checkpoints back to `checkpoints/` on your PC.
+3. Checkpoint files will automatically save to `checkpoints/`.
+

@@ -5,13 +5,59 @@ Zero third-party dependency for maximum portability across CPU and GPU systems.
 """
 from pathlib import Path
 from dataclasses import dataclass, field
+from typing import Optional
 import os
+
+# Project root directory derived strictly from this file's canonical location
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def load_project_env(env_path: Optional[Path] = None, override: bool = False) -> bool:
+    """
+    Loads environment variables from the project root .env file.
+    
+    Features:
+    - Independent of current working directory (always anchors to PROJECT_ROOT).
+    - Preserves externally supplied environment variables by default (override=False).
+    - Leverages python-dotenv when installed, with a robust fallback parser if missing.
+    """
+    target = Path(env_path) if env_path else (PROJECT_ROOT / ".env")
+    if not target.is_file():
+        return False
+
+    try:
+        from dotenv import load_dotenv
+        return bool(load_dotenv(dotenv_path=target, override=override))
+    except ImportError:
+        pass
+
+    # Built-in fallback parser if python-dotenv is not installed
+    loaded_any = False
+    try:
+        with open(target, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip().strip("'\"")
+                if key and (override or key not in os.environ):
+                    os.environ[key] = val
+                    loaded_any = True
+        return loaded_any
+    except Exception:
+        return False
+
+
+# Automatically load .env from project root at module import time
+load_project_env(override=False)
 
 
 @dataclass
 class Settings:
     # Base paths
-    BASE_DIR: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent.parent)
+    BASE_DIR: Path = field(default_factory=lambda: PROJECT_ROOT)
     
     @property
     def DATA_DIR(self) -> Path:
@@ -81,6 +127,25 @@ class Settings:
         p = os.getenv("REPORTS_DIR")
         return Path(p) if p else self.BASE_DIR / "reports"
 
+    @property
+    def SESSIONS_STORAGE_DIR(self) -> Path:
+        p = os.getenv("SESSIONS_STORAGE_DIR")
+        return Path(p) if p else self.DATA_DIR / "sessions"
+
+    # Backend & Authentication Configuration
+    MONGODB_URI: str = field(default_factory=lambda: os.getenv("MONGODB_URI", "").strip().strip("'\""))
+    MONGODB_DB_NAME: str = field(default_factory=lambda: os.getenv("MONGODB_DB_NAME", "past2pixel").strip().strip("'\""))
+    JWT_SECRET_KEY: str = field(default_factory=lambda: os.getenv("JWT_SECRET_KEY", "past2pixel-insecure-secret-key-change-in-production"))
+    JWT_ALGORITHM: str = field(default_factory=lambda: os.getenv("JWT_ALGORITHM", "HS256"))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = field(default_factory=lambda: int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")))
+
+    # Uploads & Security
+    MAX_UPLOAD_SIZE_MB: int = field(default_factory=lambda: int(os.getenv("MAX_UPLOAD_SIZE_MB", "15")))
+    ALLOWED_IMAGE_EXTENSIONS: tuple = (".png", ".jpg", ".jpeg", ".tiff", ".bmp")
+
+    # OCR Configuration
+    TESSERACT_CMD: str = field(default_factory=lambda: os.getenv("TESSERACT_CMD", ""))
+
     # Compute & Device
     DEVICE: str = field(default_factory=lambda: os.getenv("DEVICE", "auto"))
     NUM_WORKERS: int = field(default_factory=lambda: int(os.getenv("NUM_WORKERS", "0")))
@@ -113,9 +178,26 @@ class Settings:
             self.SAMPLES_DIR,
             self.CHECKPOINT_DIR,
             self.REPORTS_DIR,
+            self.SESSIONS_STORAGE_DIR,
         ]:
             path.mkdir(parents=True, exist_ok=True)
 
 
 # Global settings singleton
 settings = Settings()
+
+
+def get_settings() -> Settings:
+    """Returns the active global settings instance."""
+    return settings
+
+
+def reload_settings(env_path: Optional[Path] = None, override: bool = True) -> Settings:
+    """
+    Reloads environment variables and refreshes the global settings singleton.
+    Useful for testing or dynamic environment reconfiguration.
+    """
+    global settings
+    load_project_env(env_path=env_path, override=override)
+    settings = Settings()
+    return settings

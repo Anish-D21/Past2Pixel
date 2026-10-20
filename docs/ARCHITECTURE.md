@@ -49,22 +49,40 @@ Past2Pixel/
 ├── checkpoints/              # Checkpoint storage (.pt weights)
 ├── data/
 │   ├── raw/
-│   │   ├── vedo_ocr/         # Dataset A: VedoOCR
-│   │   └── sanskrit_hindi_vqa/# Dataset B: Sanskrit-Hindi OCR VQA
+│   │   ├── VedoOCR/          # Dataset A: VedoOCR
+│   │   └── sanskrit_hindi_ocr_vqa/ # Dataset B: Sanskrit-Hindi OCR VQA
+│   ├── sessions/             # Image-specific session directories & local DB
 │   ├── synthetic/            # Synthetic degraded/clean pairs & masks
 │   ├── splits/               # Split manifests (train/val/test)
 │   └── samples/              # Synthetic manuscript samples for testing
 ├── docs/                     # Comprehensive documentation
 │   ├── ARCHITECTURE.md
+│   ├── API_DOCUMENTATION.md  # Complete REST API specifications
 │   ├── DATASET_DOCUMENTATION.md
+│   ├── MONGODB_SETUP.md      # MongoDB Atlas & local persistence guide
 │   ├── MODEL_DOCUMENTATION.md
 │   ├── GPU_TRAINING_GUIDE.md
 │   └── TESTING.md
 ├── scripts/                  # Standalone CLI tools & test runners
 │   ├── train_restoration.py  # U-Net & Autoencoder restoration trainer
 │   ├── train_damage_detector.py # U-Net damage segmentation trainer
+│   ├── package_deliverable.py# Clean ZIP deliverable packager
 │   └── smoke_test.py         # End-to-end CPU verification suite
 ├── src/
+│   ├── api/                  # FastAPI Backend Layer
+│   │   ├── app.py            # Main FastAPI app, CORS, static mounts, exception handlers
+│   │   ├── schemas.py        # Pydantic request & response models
+│   │   └── routes/           # Modular route controllers
+│   │       ├── health.py     # /api/health and /api/readiness
+│   │       ├── auth.py       # /api/auth/register, login, me
+│   │       ├── upload.py     # /api/upload with image validation
+│   │       ├── ocr.py        # /api/ocr extraction & CER/WER
+│   │       ├── restore.py    # /api/restore AI pipeline runner
+│   │       ├── predict.py    # /api/predict-text contextual prediction
+│   │       └── sessions.py   # /api/sessions history & delete
+│   ├── auth/                 # Security & Access Control
+│   │   ├── security.py       # Bcrypt password hashing & JWT encoding/decoding
+│   │   └── dependencies.py   # FastAPI Bearer token dependency (get_current_user)
 │   ├── core/
 │   │   ├── config.py         # Centralized configuration & environment vars
 │   │   └── device.py         # Hardware detection, timing, and memory logging
@@ -74,20 +92,32 @@ Past2Pixel/
 │   │   ├── dataset_inventory.py     # Dataset cataloging & auditing
 │   │   ├── vedo_dataset.py   # Dataset A loader & sample generator
 │   │   └── sanskrit_hindi_dataset.py # Dataset B loader & vocabulary extractor
+│   ├── db/                   # Persistence Layer
+│   │   └── mongodb.py        # MongoDB Atlas client & local JSON fallback manager
+│   ├── metrics/
+│   │   ├── restoration_metrics.py # PSNR and SSIM computation
+│   │   └── damage_metrics.py      # IoU, Dice, Precision, and Recall
 │   ├── models/
 │   │   ├── autoencoder.py    # Baseline Convolutional Autoencoder
 │   │   ├── unet_restoration.py # Primary U-Net restoration network
 │   │   ├── unet_damage_detector.py # U-Net damage segmentation network
 │   │   └── model_registry.py # Model lifecycle tracking & checkpoint loader
-│   ├── metrics/
-│   │   ├── restoration_metrics.py # PSNR and SSIM computation
-│   │   └── damage_metrics.py      # IoU, Dice, Precision, and Recall
+│   ├── ocr/                  # Optical Character Recognition
+│   │   └── ocr_engine.py     # Tesseract detection, language packs, & CER/WER
 │   ├── prediction/
 │   │   └── context_predictor.py   # N-gram LM, CER, and WER metrics
 │   └── pipeline/
 │       └── restoration_engine.py  # Integrated execution engine & report generator
+├── tests/                    # Automated Pytest Suite (18 tests)
+│   ├── conftest.py
+│   ├── test_auth.py
+│   ├── test_ocr.py
+│   ├── test_pipeline_and_models.py
+│   ├── test_prediction.py
+│   ├── test_sessions_and_db.py
+│   └── test_upload_validation.py
 ├── requirements.txt
-├── run_gpu_training.bat      # One-click GPU training script
+├── run_gpu_training.bat
 └── ReadMe.md
 ```
 
