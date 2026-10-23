@@ -213,7 +213,7 @@ export const ResultsAnalysis: React.FC = () => {
         <h2 className="font-serif-scholarly font-bold text-lg text-stone-900">
           Generated Intermediate Folio Artifacts
         </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
             <div className="text-xs font-medium text-stone-700">1. Original Upload</div>
             <ArtifactImage
@@ -222,8 +222,19 @@ export const ResultsAnalysis: React.FC = () => {
               fallbackLabel="Original Folio Unavailable"
             />
           </div>
+          {artifacts.text_mask && (
+            <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
+              <div className="text-xs font-medium text-stone-700">2. Text Protection Ink Mask</div>
+              <ArtifactImage
+                src={artifacts.text_mask}
+                alt="Text Protection Mask"
+                className="h-44 w-full object-contain rounded bg-stone-900 border border-stone-100"
+                fallbackLabel="Text Mask Unavailable"
+              />
+            </div>
+          )}
           <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
-            <div className="text-xs font-medium text-stone-700">2. Damage Binary Mask</div>
+            <div className="text-xs font-medium text-stone-700">3. Damage Localization Mask</div>
             <ArtifactImage
               src={artifacts.damage_mask}
               alt="Damage Mask"
@@ -231,16 +242,28 @@ export const ResultsAnalysis: React.FC = () => {
               fallbackLabel="Damage Mask Unavailable"
             />
           </div>
+          {artifacts.baseline && (
+            <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
+              <div className="text-xs font-medium text-stone-700">4. Traditional Restoration Baseline</div>
+              <ArtifactImage
+                src={artifacts.baseline}
+                alt="Baseline"
+                fallbackLabel="Baseline Unavailable"
+              />
+            </div>
+          )}
+          {artifacts.model && (
+            <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
+              <div className="text-xs font-medium text-stone-700">5. Neural Model Output</div>
+              <ArtifactImage
+                src={artifacts.model}
+                alt="Model Output"
+                fallbackLabel="Model Output Unavailable"
+              />
+            </div>
+          )}
           <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
-            <div className="text-xs font-medium text-stone-700">3. Damage Heatmap Overlay</div>
-            <ArtifactImage
-              src={artifacts.damage_overlay}
-              alt="Damage Overlay"
-              fallbackLabel="Heatmap Overlay Unavailable"
-            />
-          </div>
-          <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
-            <div className="text-xs font-medium text-stone-700">4. Final Restored Folio</div>
+            <div className="text-xs font-medium text-stone-700">6. Final Selected Restored Folio</div>
             <ArtifactImage
               src={artifacts.restored}
               alt="Restored"

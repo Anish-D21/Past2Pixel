@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
-import { OCRResult, OCRStatusInfo, TextPredictionCandidate } from '../types/api';
+import {
+  OCRResult,
+  OCRStatusInfo,
+  TextPredictionCandidate,
+  RestorationSession,
+  SessionDetailResponse,
+} from '../types/api';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   FileText,
@@ -14,38 +20,71 @@ import {
   Upload,
   Image as ImageIcon,
   CheckCircle2,
-  Layers,
   Cpu,
   History,
+  Download,
+  RotateCcw,
+  Sliders,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  HelpCircle,
+  ArrowRight,
+  ExternalLink,
 } from 'lucide-react';
 
 export const OcrExtraction: React.FC = () => {
   const [searchParams] = useSearchParams();
   const sessionFromQuery = searchParams.get('session') || '';
 
+  // Mode & Ingestion State
   const [inputMode, setInputMode] = useState<'session' | 'direct'>('session');
   const [sessionId, setSessionId] = useState<string>(sessionFromQuery);
-  const [language, setLanguage] = useState<string>('san+hin');
-  const [targetImage, setTargetImage] = useState<'restored' | 'original'>('restored');
+  const [availableSessions, setAvailableSessions] = useState<RestorationSession[]>([]);
+  const [sessionDetail, setSessionDetail] = useState<SessionDetailResponse | null>(null);
+  const [isLoadingSession, setIsLoadingSession] = useState<boolean>(false);
+
+  // Direct File State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
 
+  // OCR Configuration State
+  const [language, setLanguage] = useState<string>('san+hin');
+  const [targetImage, setTargetImage] = useState<
+    'restored' | 'original' | 'baseline' | 'model' | 'compare_all'
+  >('restored');
+  const [preprocessing, setPreprocessing] = useState<
+    'none' | 'auto' | 'contrast' | 'illumination' | 'binarize' | 'upscale'
+  >('auto');
+
+  // Engine & Processing State
   const [engineStatus, setEngineStatus] = useState<OCRStatusInfo | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState<boolean>(true);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [ocrResult, setOcrResult] = useState<OCRResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<boolean>(false);
 
-  // Contextual Prediction State
-  const [leftContext, setLeftContext] = useState<string>('अग्निमीळे पुरोहितं यज्ञस्य देव');
-  const [rightContext, setRightContext] = useState<string>('रत्नधातमम् ॥');
+  // Dual-Workspace Text State (Editable vs Immutable Raw)
+  const [rawOcrText, setRawOcrText] = useState<string>('');
+  const [workingText, setWorkingText] = useState<string>('');
+  const [showRawComparison, setShowRawComparison] = useState<boolean>(false);
+  const [copiedWorking, setCopiedWorking] = useState<boolean>(false);
+  const [copiedRaw, setCopiedRaw] = useState<boolean>(false);
+  const [copiedCandidate, setCopiedCandidate] = useState<string | null>(null);
+
+  // Contextual Prediction State (Operates directly on workingText)
+  const [selectedWordIndex, setSelectedWordIndex] = useState<number | null>(null);
+  const [uncertainSpan, setUncertainSpan] = useState<string>('');
+  const [leftContext, setLeftContext] = useState<string>('');
+  const [rightContext, setRightContext] = useState<string>('');
   const [isPredicting, setIsPredicting] = useState<boolean>(false);
   const [predictionCandidates, setPredictionCandidates] = useState<TextPredictionCandidate[]>([]);
   const [predictionDisclaimer, setPredictionDisclaimer] = useState<string | null>(null);
+  const [acceptedNotice, setAcceptedNotice] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Initialize query param
   useEffect(() => {
     if (sessionFromQuery) {
       setSessionId(sessionFromQuery);
@@ -53,29 +92,84 @@ export const OcrExtraction: React.FC = () => {
     }
   }, [sessionFromQuery]);
 
-  // Fetch engine readiness on mount
+  // Fetch engine readiness and recent user sessions on mount
   useEffect(() => {
     let isMounted = true;
-    const fetchStatus = async () => {
+    const fetchStatusAndSessions = async () => {
       setIsLoadingStatus(true);
       try {
-        const res = await api.ocr.getStatus();
-        if (isMounted) {
-          setEngineStatus(res);
+        const [statusRes, sessionsRes] = await Promise.allSettled([
+          api.ocr.getStatus(),
+          api.sessions.listMySessions(),
+        ]);
+
+        if (!isMounted) return;
+
+        if (statusRes.status === 'fulfilled') {
+          setEngineStatus(statusRes.value);
+        }
+        if (sessionsRes.status === 'fulfilled') {
+          setAvailableSessions(sessionsRes.value || []);
         }
       } catch (err: any) {
-        console.warn('Failed to fetch OCR engine status:', err);
+        console.warn('Failed to load initial OCR prerequisites:', err);
       } finally {
-        if (isMounted) {
-          setIsLoadingStatus(false);
-        }
+        if (isMounted) setIsLoadingStatus(false);
       }
     };
-    fetchStatus();
+
+    fetchStatusAndSessions();
     return () => {
       isMounted = false;
     };
   }, []);
+
+  // Fetch session details whenever sessionId changes in session mode
+  useEffect(() => {
+    if (inputMode !== 'session' || !sessionId.trim()) {
+      setSessionDetail(null);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingSession(true);
+
+    api.sessions
+      .getSession(sessionId.trim())
+      .then((detail) => {
+        if (isMounted) {
+          setSessionDetail(detail);
+        }
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setSessionDetail(null);
+          console.warn(`Could not load details for session ${sessionId}:`, err);
+        }
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingSession(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [sessionId, inputMode]);
+
+  // When OCR completes, initialize both raw and working text
+  useEffect(() => {
+    if (ocrResult?.extracted_text) {
+      setRawOcrText(ocrResult.extracted_text);
+      setWorkingText(ocrResult.extracted_text);
+      setSelectedWordIndex(null);
+      setUncertainSpan('');
+      setLeftContext('');
+      setRightContext('');
+      setPredictionCandidates([]);
+      setPredictionDisclaimer(null);
+      setAcceptedNotice(null);
+    }
+  }, [ocrResult]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -92,19 +186,24 @@ export const OcrExtraction: React.FC = () => {
 
     if (inputMode === 'session') {
       if (!sessionId.trim()) {
-        setError('Please provide a valid session ID containing an uploaded manuscript folio.');
+        setError('Please provide or select a valid restoration session ID.');
         return;
       }
 
       setIsProcessing(true);
       try {
-        const res = await api.ocr.extractText(sessionId.trim(), language, targetImage);
+        const res = await api.ocr.extractText(
+          sessionId.trim(),
+          language,
+          targetImage,
+          preprocessing
+        );
         setOcrResult(res);
       } catch (err: any) {
         const msg = err.message || '';
         if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
           setError(
-            `Session '${sessionId.trim()}' was not found on the server. Please verify your session ID from History, or switch to the 'Direct Image Upload' tab.`
+            `Session '${sessionId.trim()}' was not found on the server. Please verify the session ID from History, or switch to 'Direct Image Upload'.`
           );
         } else {
           setError(msg || 'Failed to execute OCR text extraction.');
@@ -113,7 +212,6 @@ export const OcrExtraction: React.FC = () => {
         setIsProcessing(false);
       }
     } else {
-      // Direct file mode
       if (!selectedFile) {
         setError('Please select an image file to perform direct OCR text extraction.');
         return;
@@ -121,7 +219,7 @@ export const OcrExtraction: React.FC = () => {
 
       setIsProcessing(true);
       try {
-        const res = await api.ocr.extractDirect(selectedFile, language);
+        const res = await api.ocr.extractDirect(selectedFile, language, preprocessing);
         setOcrResult(res);
       } catch (err: any) {
         setError(err.message || 'Direct OCR text extraction failed.');
@@ -131,24 +229,103 @@ export const OcrExtraction: React.FC = () => {
     }
   };
 
-  const handleCopyText = () => {
-    if (!ocrResult?.extracted_text) return;
-    navigator.clipboard.writeText(ocrResult.extracted_text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  // Copy helpers
+  const handleCopyWorkingText = () => {
+    if (!workingText) return;
+    navigator.clipboard.writeText(workingText);
+    setCopiedWorking(true);
+    setTimeout(() => setCopiedWorking(false), 2000);
   };
 
+  const handleCopyRawText = () => {
+    if (!rawOcrText) return;
+    navigator.clipboard.writeText(rawOcrText);
+    setCopiedRaw(true);
+    setTimeout(() => setCopiedRaw(false), 2000);
+  };
+
+  const handleCopyCandidate = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedCandidate(key);
+    setTimeout(() => setCopiedCandidate(null), 2000);
+  };
+
+  // UTF-8 Plain Text Download
+  const handleDownloadTxt = () => {
+    if (!workingText) return;
+    const header = [
+      '================================================================',
+      'PAST2PIXEL MANUSCRIPT OCR & TEXT PRESERVATION REPORT',
+      `Timestamp: ${new Date().toISOString()}`,
+      `Source Mode: ${inputMode === 'session' ? `Session (${sessionId})` : 'Direct Image Upload'}`,
+      `Target Image: ${inputMode === 'session' ? targetImage : (selectedFile?.name || 'Uploaded File')}`,
+      `OCR Language: ${language}`,
+      `Preprocessing Applied: ${ocrResult?.preprocessing_applied || preprocessing}`,
+      `Mean Engine Confidence: ${ocrResult?.mean_confidence != null ? `${ocrResult.mean_confidence.toFixed(1)}%` : 'N/A'}`,
+      `Character Count: ${workingText.length}`,
+      '================================================================',
+      '',
+      workingText,
+    ].join('\n');
+
+    const blob = new Blob([header], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `past2pixel_ocr_${sessionId || 'manuscript'}_${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Reset working text to immutable raw OCR output
+  const handleResetToRaw = () => {
+    setWorkingText(rawOcrText);
+    setAcceptedNotice('Working text reset to original raw OCR output.');
+    setTimeout(() => setAcceptedNotice(null), 3000);
+  };
+
+  // Tokenization of workingText for interactive token selector
+  const tokens = workingText
+    .split(/(\s+|[।॥,;:.!?]+)/)
+    .filter((t) => t.length > 0);
+
+  // Extract context around selected token in workingText
+  const handleSelectToken = (index: number, word: string) => {
+    setSelectedWordIndex(index);
+    setUncertainSpan(word);
+
+    // Compute left words and right words
+    const beforeTokens = tokens.slice(0, index).filter((t) => /\S/.test(t) && !/^[।॥,;:.!?]+$/.test(t));
+    const afterTokens = tokens.slice(index + 1).filter((t) => /\S/.test(t) && !/^[।॥,;:.!?]+$/.test(t));
+
+    const left = beforeTokens.slice(-3).join(' ');
+    const right = afterTokens.slice(0, 3).join(' ');
+
+    setLeftContext(left);
+    setRightContext(right);
+    setPredictionCandidates([]);
+    setPredictionDisclaimer(null);
+  };
+
+  // Trigger Context-Aware Damaged Text Completion
   const handlePredictMissingText = async () => {
-    if (!leftContext.trim() && !rightContext.trim()) {
+    if (!uncertainSpan.trim() && !leftContext.trim() && !rightContext.trim()) {
+      setError('Please select or specify an uncertain span or surrounding context.');
       return;
     }
+
     setIsPredicting(true);
+    setAcceptedNotice(null);
     try {
       const res = await api.prediction.predictText({
-        left_context: leftContext,
-        right_context: rightContext,
+        full_text: workingText,
+        uncertain_span: uncertainSpan.trim() || undefined,
+        span_index: selectedWordIndex != null ? selectedWordIndex : undefined,
+        left_context: leftContext.trim() || undefined,
+        right_context: rightContext.trim() || undefined,
         max_candidates: 4,
       });
+
       setPredictionCandidates(res.candidates || []);
       setPredictionDisclaimer(res.disclaimer);
     } catch (err: any) {
@@ -158,6 +335,43 @@ export const OcrExtraction: React.FC = () => {
     }
   };
 
+  // Accept a predicted candidate: updates workingText without touching rawOcrText!
+  const handleAcceptCandidate = (candidateWord: string) => {
+    if (selectedWordIndex != null && selectedWordIndex >= 0 && selectedWordIndex < tokens.length) {
+      const originalWord = tokens[selectedWordIndex];
+      const newTokens = [...tokens];
+      newTokens[selectedWordIndex] = candidateWord;
+      const updatedText = newTokens.join('');
+      setWorkingText(updatedText);
+      setAcceptedNotice(
+        `Applied correction: replaced "${originalWord}" with linguistic candidate "${candidateWord}".`
+      );
+    } else if (uncertainSpan && workingText.includes(uncertainSpan)) {
+      // Fallback: replace first occurrence of uncertainSpan
+      const updatedText = workingText.replace(uncertainSpan, candidateWord);
+      setWorkingText(updatedText);
+      setAcceptedNotice(
+        `Applied correction: replaced "${uncertainSpan}" with linguistic candidate "${candidateWord}".`
+      );
+    } else {
+      // Append if no span selected
+      setWorkingText((prev) => `${prev} ${candidateWord}`.trim());
+      setAcceptedNotice(`Inserted candidate "${candidateWord}" into working text.`);
+    }
+
+    setUncertainSpan(candidateWord);
+    setPredictionCandidates([]);
+    setTimeout(() => setAcceptedNotice(null), 4000);
+  };
+
+  // Compute text differences indicator
+  const isTextModified = rawOcrText !== '' && workingText !== rawOcrText;
+
+  // Artifact check for current session
+  const originalImageUrl = sessionDetail?.artifacts?.original;
+  const restoredImageUrl = sessionDetail?.artifacts?.restored;
+  const isRestoredAvailable = !!restoredImageUrl;
+
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
       {/* Title */}
@@ -166,7 +380,7 @@ export const OcrExtraction: React.FC = () => {
           Optical Character Recognition & Text Preservation
         </h1>
         <p className="text-xs text-stone-500 mt-1">
-          Authentic Tesseract OCR for Vedic Sanskrit & Hindi manuscripts with speculative linguistic completion
+          Evidence-based OCR for Vedic Sanskrit, Hindi, and English manuscripts with context-aware linguistic completion
         </p>
       </div>
 
@@ -198,6 +412,11 @@ export const OcrExtraction: React.FC = () => {
                     <span className="font-mono text-[11px] text-stone-700 font-semibold">
                       {engineStatus.available_languages?.join(', ') || 'none'}
                     </span>
+                    {engineStatus.tessdata_dir && (
+                      <span className="text-stone-400 text-[10px] block truncate font-mono">
+                        tessdata: {engineStatus.tessdata_dir}
+                      </span>
+                    )}
                   </>
                 ) : (
                   'External engine not detected on system PATH or default Windows directories.'
@@ -226,10 +445,10 @@ export const OcrExtraction: React.FC = () => {
       )}
 
       {/* Control & Ingestion Card */}
-      <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-xs space-y-5">
+      <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-xs space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-stone-100 pb-3 gap-2">
-          <h2 className="font-serif-scholarly font-bold text-base text-stone-900">
-            Folio Ingestion & Script Parameters
+          <h2 className="font-serif-scholarly font-bold text-base text-stone-900 flex items-center gap-2">
+            <span>Folio Ingestion & Script Parameters</span>
           </h2>
 
           {/* Mode Switcher Tabs */}
@@ -259,44 +478,150 @@ export const OcrExtraction: React.FC = () => {
           </div>
         </div>
 
-        {/* Ingestion Mode 1: Restoration Session ID */}
+        {/* Ingestion Mode 1: Restoration Session ID & Visual Previews */}
         {inputMode === 'session' ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2 space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-medium text-stone-700">
-                  Restoration Session ID
-                </label>
-                <Link
-                  to="/history"
-                  className="text-[11px] text-emerald-800 hover:underline flex items-center gap-1 font-medium"
-                >
-                  <History className="w-3 h-3" />
-                  <span>Browse Recent Sessions</span>
-                </Link>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-medium text-stone-700">
+                    Restoration Session Selection
+                  </label>
+                  <Link
+                    to="/history"
+                    className="text-[11px] text-emerald-800 hover:underline flex items-center gap-1 font-medium"
+                  >
+                    <History className="w-3 h-3" />
+                    <span>Browse History</span>
+                  </Link>
+                </div>
+
+                {availableSessions.length > 0 ? (
+                  <div className="flex gap-2">
+                    <select
+                      value={sessionId}
+                      onChange={(e) => setSessionId(e.target.value)}
+                      className="w-full text-xs font-mono border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
+                    >
+                      <option value="">-- Select a Recent Session --</option>
+                      {availableSessions.map((s) => (
+                        <option key={s.session_id} value={s.session_id}>
+                          {s.session_id} ({new Date(s.created_at).toLocaleDateString()}) - {s.status}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={sessionId}
+                    onChange={(e) => setSessionId(e.target.value)}
+                    placeholder="e.g. p2p_645fd155_1729000000"
+                    className="w-full text-xs font-mono border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
+                  />
+                )}
               </div>
-              <input
-                type="text"
-                value={sessionId}
-                onChange={(e) => setSessionId(e.target.value)}
-                placeholder="e.g. p2p_645fd155_1729000000"
-                className="w-full text-xs font-mono border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
-              />
+
+              <div>
+                <label className="block text-xs font-medium text-stone-700 mb-1">
+                  Target Pipeline Artifact
+                </label>
+                <select
+                  value={targetImage}
+                  onChange={(e) =>
+                    setTargetImage(
+                      e.target.value as 'restored' | 'original' | 'baseline' | 'model' | 'compare_all'
+                    )
+                  }
+                  className="w-full text-xs border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
+                >
+                  <option value="restored">Restored Folio (Text-Aware Selected)</option>
+                  <option value="original">Original Degraded Folio</option>
+                  <option value="baseline">Traditional Baseline (Illumination Normalized)</option>
+                  <option value="model">Neural Model (Raw U-Net Output)</option>
+                  <option value="compare_all">⚖️ Compare All Candidates</option>
+                </select>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-stone-700 mb-1">
-                Target Pipeline Artifact
-              </label>
-              <select
-                value={targetImage}
-                onChange={(e) => setTargetImage(e.target.value as 'restored' | 'original')}
-                className="w-full text-xs border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
-              >
-                <option value="restored">Restored Folio (U-Net Cleaned)</option>
-                <option value="original">Original Degraded Folio</option>
-              </select>
-            </div>
+            {/* Session Visual Folio Previews */}
+            {sessionId.trim() && (
+              <div className="p-3.5 bg-stone-50 rounded-xl border border-stone-200">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-stone-700 flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-emerald-800" />
+                    <span>Session Folio Assets</span>
+                  </span>
+                  {isLoadingSession && (
+                    <span className="text-[11px] text-stone-400 font-mono animate-pulse">
+                      loading session images...
+                    </span>
+                  )}
+                </div>
+
+                {sessionDetail ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="p-2.5 bg-white rounded-lg border border-stone-200 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-stone-700">Original Manuscript</span>
+                        <span className="text-[10px] text-stone-400 font-mono">Input</span>
+                      </div>
+                      {originalImageUrl ? (
+                        <div className="h-28 w-full bg-stone-100 rounded overflow-hidden flex items-center justify-center border border-stone-200">
+                          <img
+                            src={originalImageUrl}
+                            alt="Original Folio"
+                            className="max-h-full max-w-full object-contain"
+                          />
+                        </div>
+                      ) : (
+                        <div className="h-28 w-full bg-stone-100 rounded flex items-center justify-center text-stone-400 text-xs italic">
+                          Original image unavailable
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-2.5 bg-white rounded-lg border border-stone-200 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-stone-700">Restored Folio</span>
+                        {isRestoredAvailable ? (
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-semibold">
+                            Restored
+                          </span>
+                        ) : (
+                          <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded">
+                            Pending
+                          </span>
+                        )}
+                      </div>
+                      {restoredImageUrl ? (
+                        <div className="h-28 w-full bg-stone-100 rounded overflow-hidden flex items-center justify-center border border-stone-200">
+                          <img
+                            src={restoredImageUrl}
+                            alt="Restored Folio"
+                            className="max-h-full max-w-full object-contain"
+                          />
+                        </div>
+                      ) : (
+                        <div className="h-28 w-full bg-amber-50 rounded flex flex-col items-center justify-center text-amber-800 text-[11px] p-2 text-center border border-amber-200">
+                          <AlertTriangle className="w-4 h-4 mb-1 text-amber-600" />
+                          <span>Restored image not yet generated for this session.</span>
+                          <span className="text-[10px] text-amber-700 mt-0.5">
+                            OCR will run on the original image if 'restored' is selected.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  !isLoadingSession && (
+                    <div className="text-xs text-stone-500 italic p-2">
+                      Enter or select a session above to preview input and restored folios.
+                    </div>
+                  )
+                )}
+              </div>
+            )}
           </div>
         ) : (
           /* Ingestion Mode 2: Direct File Upload */
@@ -321,7 +646,7 @@ export const OcrExtraction: React.FC = () => {
                     <img
                       src={filePreview}
                       alt="Uploaded preview"
-                      className="w-16 h-16 object-cover rounded-lg border border-stone-300"
+                      className="w-20 h-20 object-contain rounded-lg border border-stone-300 bg-white"
                     />
                     <div className="text-left">
                       <div className="text-xs font-semibold text-stone-800">
@@ -340,7 +665,7 @@ export const OcrExtraction: React.FC = () => {
                       Click to choose manuscript image or drag & drop here
                     </div>
                     <div className="text-[11px] text-stone-400">
-                      Supports PNG, JPG, TIFF, BMP (up to 15 MB)
+                      Supports PNG, JPG, JPEG, TIFF, BMP (up to 15 MB)
                     </div>
                   </>
                 )}
@@ -349,8 +674,8 @@ export const OcrExtraction: React.FC = () => {
           </div>
         )}
 
-        {/* Script Selection & Execution Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+        {/* Script Selection & Preprocessing Settings Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-stone-100">
           <div>
             <label className="block text-xs font-medium text-stone-700 mb-1">
               Target Script / Language Pack
@@ -358,16 +683,47 @@ export const OcrExtraction: React.FC = () => {
             <select
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
-              className="w-full text-xs border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
+              className="w-full text-xs border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700 font-medium"
             >
-              <option value="san+hin">Sanskrit + Hindi (Devanagari)</option>
+              <option value="san+hin">Sanskrit + Hindi (Devanagari Dual-Pack)</option>
               <option value="san">Vedic Sanskrit (san)</option>
               <option value="hin">Hindi (hin)</option>
               <option value="eng">English Transliteration (eng)</option>
+              <option value="hin+eng">Hindi + English (hin+eng)</option>
+              <option value="san+hin+eng">Multilingual (san+hin+eng)</option>
             </select>
+            <p className="text-[10px] text-stone-400 mt-1">
+              Verified against installed traineddata packs.
+            </p>
           </div>
 
-          <div className="md:col-span-2 flex items-end">
+          <div>
+            <label className="block text-xs font-medium text-stone-700 mb-1 flex items-center gap-1.5">
+              <Sliders className="w-3.5 h-3.5 text-stone-500" />
+              <span>OCR Preprocessing</span>
+            </label>
+            <select
+              value={preprocessing}
+              onChange={(e) =>
+                setPreprocessing(
+                  e.target.value as 'none' | 'auto' | 'contrast' | 'illumination' | 'binarize' | 'upscale'
+                )
+              }
+              className="w-full text-xs border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
+            >
+              <option value="auto">Auto (Evidence-Based Selection)</option>
+              <option value="none">None (Raw Input Image)</option>
+              <option value="contrast">Conservative Contrast Optimization</option>
+              <option value="illumination">Illumination Normalization</option>
+              <option value="binarize">Adaptive Binarization (Sauvola)</option>
+              <option value="upscale">2× Super-Resolution Upscaling</option>
+            </select>
+            <p className="text-[10px] text-stone-400 mt-1">
+              Isolated OCR enhancement; does not overwrite restoration.
+            </p>
+          </div>
+
+          <div className="flex items-end">
             <button
               type="button"
               onClick={handleExtractOcr}
@@ -376,12 +732,12 @@ export const OcrExtraction: React.FC = () => {
                 (inputMode === 'session' && !sessionId.trim()) ||
                 (inputMode === 'direct' && !selectedFile)
               }
-              className="inline-flex items-center gap-2 px-6 py-2.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-lg shadow-sm text-xs font-semibold transition disabled:opacity-50 cursor-pointer w-full sm:w-auto justify-center"
+              className="inline-flex items-center gap-2 px-6 py-2.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-lg shadow-sm text-xs font-semibold transition disabled:opacity-50 cursor-pointer w-full justify-center"
             >
               {isProcessing ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Scanning Folio Glyphs...</span>
+                  <span>Extracting Folio Glyphs...</span>
                 </>
               ) : (
                 <>
@@ -402,15 +758,19 @@ export const OcrExtraction: React.FC = () => {
       {ocrResult && (
         <div className="space-y-6">
           {/* Tesseract Unavailable Diagnostic Warning */}
-          {ocrResult.status === 'UNAVAILABLE' ? (
+          {ocrResult.status === 'UNAVAILABLE' || ocrResult.status === 'MISSING_LANGUAGE_PACK' ? (
             <div className="p-6 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 space-y-3">
               <div className="flex items-center gap-2 font-bold text-sm text-amber-900">
                 <AlertTriangle className="w-5 h-5 text-amber-700" />
-                <span>Tesseract OCR Engine Not Configured on Server</span>
+                <span>
+                  {ocrResult.status === 'MISSING_LANGUAGE_PACK'
+                    ? 'Required Tesseract Language Pack Missing'
+                    : 'Tesseract OCR Engine Not Configured on Server'}
+                </span>
               </div>
               <p className="text-xs text-amber-900/90 leading-relaxed">
                 {ocrResult.error ||
-                  'The server environment does not have Tesseract installed or configured in the system PATH. Per academic honesty rules, Past2Pixel does not fabricate OCR text.'}
+                  'The requested OCR configuration could not be executed. Per academic honesty rules, Past2Pixel never substitutes random language packs or fabricates OCR output.'}
               </p>
               <div className="bg-amber-100/70 p-4 rounded-lg border border-amber-200 text-xs space-y-2">
                 <div className="font-semibold text-amber-900 flex items-center gap-1.5">
@@ -418,55 +778,280 @@ export const OcrExtraction: React.FC = () => {
                   <span>Actionable Setup Steps:</span>
                 </div>
                 <ol className="list-decimal list-inside space-y-1 text-stone-700 font-mono text-[11px]">
-                  <li>Download Tesseract OCR for Windows from UB-Mannheim</li>
-                  <li>Include "Additional script data: Devanagari" during installation</li>
-                  <li>Add path to your .env: TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe</li>
+                  <li>Ensure Tesseract OCR is installed on the host machine.</li>
+                  <li>
+                    Place missing <code className="bg-amber-200/60 px-1 rounded">.traineddata</code> files (e.g. <code className="bg-amber-200/60 px-1 rounded">san.traineddata</code>, <code className="bg-amber-200/60 px-1 rounded">hin.traineddata</code>) in your tessdata directory.
+                  </li>
+                  <li>Verify engine status using the diagnostic panel above.</li>
                 </ol>
               </div>
             </div>
           ) : (
-            /* Authentic OCR Text Display */
-            <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-100 pb-3">
-                <div className="flex items-center gap-3">
-                  <h2 className="font-serif-scholarly font-bold text-lg text-stone-900">
-                    Extracted Manuscript Text
-                  </h2>
-                  <StatusBadge status={ocrResult.status} size="sm" />
-                  {ocrResult.image_source && (
-                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-stone-100 text-stone-600 border border-stone-200">
-                      source: {ocrResult.image_source}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-4 text-xs text-stone-500">
-                  <span>Characters: {ocrResult.character_count}</span>
-                  <span>Words: {ocrResult.word_count}</span>
-                  {ocrResult.mean_confidence != null && (
-                    <span className="font-semibold text-emerald-800">
-                      Confidence: {ocrResult.mean_confidence.toFixed(1)}%
-                    </span>
-                  )}
-                  <button
-                    onClick={handleCopyText}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 font-medium transition cursor-pointer"
-                  >
-                    {copied ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                    <span>{copied ? 'Copied' : 'Copy'}</span>
-                  </button>
-                </div>
-              </div>
+            <div className="space-y-6">
+              {/* Multi-Candidate Comparative OCR Grid if comparison_results present */}
+              {ocrResult.comparison_results ? (
+                <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-100 pb-3">
+                    <div>
+                      <h2 className="font-serif-scholarly font-bold text-lg text-stone-900 flex items-center gap-2">
+                        <span>Multi-Candidate Comparative OCR Analysis</span>
+                        <StatusBadge status={ocrResult.status} size="sm" />
+                      </h2>
+                      <p className="text-xs text-stone-500 mt-0.5">
+                        Authentic Tesseract extraction executed independently on all pipeline variants
+                      </p>
+                    </div>
+                  </div>
 
-              {/* Devanagari Typography Paper Container */}
-              <div className="p-6 bg-stone-50 rounded-lg border border-stone-200 font-serif-scholarly text-stone-900 text-lg leading-loose tracking-wide whitespace-pre-wrap selection:bg-amber-200">
-                {ocrResult.extracted_text || (
-                  <span className="text-stone-400 italic text-sm">
-                    No characters recognized in this folio region.
-                  </span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Object.entries(ocrResult.comparison_results).map(([candKey, candData]) => {
+                      const isSelected = candKey === (ocrResult.image_source || 'restored');
+                      return (
+                        <div
+                          key={candKey}
+                          className={`p-4 rounded-xl border flex flex-col justify-between space-y-3 ${
+                            isSelected
+                              ? 'bg-emerald-50/40 border-emerald-300 ring-1 ring-emerald-400'
+                              : 'bg-stone-50/60 border-stone-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between border-b border-stone-200/60 pb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold uppercase tracking-wider text-stone-800">
+                                {candKey.replace('_', ' ')}
+                              </span>
+                              {isSelected && (
+                                <span className="text-[10px] bg-emerald-800 text-white font-bold px-2 py-0.5 rounded-full">
+                                  Primary
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-stone-500 font-mono">
+                              <span>Chars: {candData.character_count}</span>
+                              {candData.mean_confidence != null && (
+                                <span>• Conf: {candData.mean_confidence.toFixed(1)}%</span>
+                              )}
+                              <button
+                                onClick={() => handleCopyCandidate(candData.extracted_text, candKey)}
+                                className="p-1 hover:bg-stone-200 rounded text-stone-600 transition cursor-pointer"
+                                title="Copy text"
+                              >
+                                {copiedCandidate === candKey ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="p-3 bg-white rounded-lg border border-stone-200/70 font-serif-scholarly text-stone-900 text-sm leading-relaxed whitespace-pre-wrap min-h-[90px] max-h-[160px] overflow-y-auto">
+                            {candData.extracted_text || (
+                              <span className="text-stone-400 italic text-xs">
+                                No characters recognized
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="pt-1 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setWorkingText(candData.extracted_text);
+                                setAcceptedNotice(`Loaded "${candKey}" OCR text into working editor.`);
+                                setTimeout(() => setAcceptedNotice(null), 3000);
+                              }}
+                              className="text-[11px] text-emerald-800 hover:text-emerald-700 font-semibold cursor-pointer"
+                            >
+                              Load Into Editor →
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Dual-View Extracted Text Workspace: Editable vs Raw Immutable */}
+              <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-serif-scholarly font-bold text-lg text-stone-900">
+                      Extracted Manuscript Text Workspace
+                    </h2>
+                    <StatusBadge status={ocrResult.status} size="sm" />
+                    {ocrResult.image_source && (
+                      <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-stone-100 text-stone-700 border border-stone-200">
+                        source: {ocrResult.image_source}
+                      </span>
+                    )}
+                    {ocrResult.preprocessing_applied && (
+                      <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        prep: {ocrResult.preprocessing_applied}
+                      </span>
+                    )}
+                    {isTextModified && (
+                      <span className="text-[10px] bg-amber-100 text-amber-900 font-semibold px-2 py-0.5 rounded border border-amber-300">
+                        Edited
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleCopyWorkingText}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-medium transition cursor-pointer"
+                      title="Copy working text"
+                    >
+                      {copiedWorking ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span>{copiedWorking ? 'Copied' : 'Copy Text'}</span>
+                    </button>
+
+                    <button
+                      onClick={handleDownloadTxt}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-medium transition cursor-pointer"
+                      title="Download UTF-8 plain text file"
+                    >
+                      <Download className="w-3.5 h-3.5 text-stone-600" />
+                      <span>Download .txt</span>
+                    </button>
+
+                    {isTextModified && (
+                      <button
+                        onClick={handleResetToRaw}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium transition cursor-pointer border border-amber-200"
+                        title="Revert all edits to raw OCR output"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Revert to Raw</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => setShowRawComparison(!showRawComparison)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-stone-200 text-stone-600 hover:text-stone-900 text-xs font-medium transition cursor-pointer"
+                    >
+                      <span>Raw OCR</span>
+                      {showRawComparison ? (
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Status notice */}
+                {acceptedNotice && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg text-xs flex items-center justify-between">
+                    <span>{acceptedNotice}</span>
+                    <button
+                      onClick={() => setAcceptedNotice(null)}
+                      className="text-emerald-700 font-bold hover:text-emerald-900"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {/* Primary Editable Workspace */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-stone-500">
+                    <span className="font-semibold text-stone-700">
+                      Editable Working Transcription (Unicode UTF-8)
+                    </span>
+                    <div className="flex items-center gap-3 font-mono text-[11px]">
+                      <span>Characters: {workingText.length}</span>
+                      <span>Words: {workingText.trim() ? workingText.trim().split(/\s+/).length : 0}</span>
+                      {ocrResult.mean_confidence != null && (
+                        <span className="text-emerald-800 font-semibold">
+                          Confidence: {ocrResult.mean_confidence.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <textarea
+                    value={workingText}
+                    onChange={(e) => setWorkingText(e.target.value)}
+                    rows={6}
+                    placeholder="Extracted manuscript text will appear here. You can directly edit and correct OCR glyphs."
+                    className="w-full p-4 bg-stone-50/50 hover:bg-stone-50 focus:bg-white rounded-lg border border-stone-300 font-serif-scholarly text-stone-900 text-lg leading-relaxed focus:ring-2 focus:ring-emerald-700 transition"
+                  />
+                  <p className="text-[11px] text-stone-400">
+                    Tip: You can correct misspelled characters above, or click individual words below for context-aware completion.
+                  </p>
+                </div>
+
+                {/* Collapsible Raw Immutable OCR Output */}
+                {showRawComparison && (
+                  <div className="p-4 bg-stone-100/70 rounded-lg border border-stone-300 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-stone-700 uppercase tracking-wider">
+                          Immutable Raw Tesseract Output
+                        </span>
+                        <span className="text-[10px] bg-stone-200 text-stone-600 px-2 py-0.5 rounded font-mono">
+                          Read-Only Audit Trail
+                        </span>
+                      </div>
+                      <button
+                        onClick={handleCopyRawText}
+                        className="text-xs text-stone-600 hover:text-stone-900 flex items-center gap-1 font-medium"
+                      >
+                        {copiedRaw ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                        <span>{copiedRaw ? 'Copied' : 'Copy Raw'}</span>
+                      </button>
+                    </div>
+                    <pre className="p-3 bg-white rounded border border-stone-200 font-serif-scholarly text-stone-800 text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
+                      {rawOcrText || '(Empty raw OCR output)'}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Interactive Token Selector for Damaged Text Completion */}
+                {tokens.filter((t) => /\S/.test(t) && !/^[।॥,;:.!?]+$/.test(t)).length > 0 && (
+                  <div className="pt-3 border-t border-stone-100 space-y-2">
+                    <span className="text-xs font-semibold text-stone-700 block">
+                      Interactive Folio Tokens (Click a word or damaged glyph to predict):
+                    </span>
+                    <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-2 bg-stone-50 rounded-lg border border-stone-200">
+                      {tokens.map((token, idx) => {
+                        const isWord = /\S/.test(token) && !/^[।॥,;:.!?]+$/.test(token);
+                        if (!isWord) {
+                          return (
+                            <span key={idx} className="text-stone-400 font-serif-scholarly self-center">
+                              {token}
+                            </span>
+                          );
+                        }
+                        const isSelected = selectedWordIndex === idx;
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleSelectToken(idx, token)}
+                            className={`px-2.5 py-1 rounded text-xs font-serif-scholarly transition cursor-pointer ${
+                              isSelected
+                                ? 'bg-amber-600 text-white font-bold shadow-xs'
+                                : 'bg-white hover:bg-amber-100 text-stone-800 border border-stone-200'
+                            }`}
+                          >
+                            {token}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -484,77 +1069,127 @@ export const OcrExtraction: React.FC = () => {
             </h2>
           </div>
           <p className="text-xs text-stone-500 mt-1">
-            Statistically predicts obscured characters using authentic Vedic corpora. Strictly marked as speculative.
+            Statistically predicts obscured characters using authentic Vedic & Hindi corpora (VedoOCR and VQA datasets). Operates directly on the extracted manuscript text above.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Context Input Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-medium text-stone-700 mb-1">
-              Left Readable Context (Devanagari)
+              Left Context (Preceding Words)
             </label>
             <input
               type="text"
               value={leftContext}
               onChange={(e) => setLeftContext(e.target.value)}
+              placeholder="e.g. अग्निमीळे पुरोहितं"
               className="w-full text-sm font-serif-scholarly border border-stone-300 rounded-lg p-2.5 bg-stone-50"
             />
           </div>
 
           <div>
             <label className="block text-xs font-medium text-stone-700 mb-1">
-              Right Readable Context (Devanagari)
+              Uncertain / Damaged Span
+            </label>
+            <input
+              type="text"
+              value={uncertainSpan}
+              onChange={(e) => setUncertainSpan(e.target.value)}
+              placeholder="e.g. य[?]स्य or uncertain word"
+              className="w-full text-sm font-serif-scholarly border border-amber-300 rounded-lg p-2.5 bg-amber-50/50 font-bold text-stone-900"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-stone-700 mb-1">
+              Right Context (Succeeding Words)
             </label>
             <input
               type="text"
               value={rightContext}
               onChange={(e) => setRightContext(e.target.value)}
+              placeholder="e.g. रत्नधातमम्"
               className="w-full text-sm font-serif-scholarly border border-stone-300 rounded-lg p-2.5 bg-stone-50"
             />
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handlePredictMissingText}
-          disabled={isPredicting}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-100 rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
-        >
-          {isPredicting ? (
-            <>
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              <span>Querying Linguistic Corpora...</span>
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Predict Missing Span</span>
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handlePredictMissingText}
+            disabled={isPredicting || (!uncertainSpan.trim() && !leftContext.trim() && !rightContext.trim())}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-100 rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+          >
+            {isPredicting ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Querying Linguistic Corpora...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Predict Missing / Damaged Span</span>
+              </>
+            )}
+          </button>
 
+          {uncertainSpan && (
+            <span className="text-xs text-stone-500">
+              Target: <strong className="font-serif-scholarly text-stone-800">"{uncertainSpan}"</strong>
+            </span>
+          )}
+        </div>
+
+        {/* Prediction Results & Accept Mechanism */}
         {predictionCandidates.length > 0 && (
-          <div className="mt-4 p-4 rounded-lg bg-amber-50/60 border border-amber-200 space-y-3">
-            <div className="text-xs font-semibold text-stone-800">
-              Corpus Completion Candidates (Ranked by Transition Probability):
+          <div className="mt-4 p-5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                Corpus Completion Candidates (Ranked by Transition Probability)
+              </span>
+              <span className="text-[11px] text-amber-800 font-mono">
+                {predictionCandidates.length} suggestions
+              </span>
             </div>
-            <div className="flex flex-wrap gap-2">
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
               {predictionCandidates.map((c, i) => (
                 <div
                   key={i}
-                  className="px-3 py-1.5 rounded bg-white border border-amber-300 text-xs font-serif-scholarly flex items-center gap-2 shadow-xs"
+                  className="p-3 rounded-lg bg-white border border-amber-300 shadow-xs flex flex-col justify-between space-y-2.5"
                 >
-                  <span className="font-bold text-stone-900">{c.word}</span>
-                  <span className="text-[10px] text-stone-400 font-mono">
-                    ({(c.score * 100).toFixed(1)}%)
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-base font-bold font-serif-scholarly text-stone-900">
+                      {c.word}
+                    </span>
+                    <span className="text-xs font-bold text-emerald-800 font-mono">
+                      {(c.score * 100).toFixed(1)}%
+                    </span>
+                  </div>
+
+                  {c.evidence && (
+                    <p className="text-[10px] text-stone-500 italic line-clamp-2">
+                      {c.evidence}
+                    </p>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleAcceptCandidate(c.word)}
+                    className="w-full py-1.5 px-2 bg-emerald-800 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                  >
+                    <Check className="w-3 h-3" />
+                    <span>Accept & Apply</span>
+                  </button>
                 </div>
               ))}
             </div>
 
             {predictionDisclaimer && (
-              <p className="text-[11px] text-amber-900/80 italic pt-1 border-t border-amber-200">
-                {predictionDisclaimer}
+              <p className="text-[11px] text-amber-900/90 italic pt-2 border-t border-amber-200/80 leading-relaxed">
+                ⚠️ <strong>Scholarly Disclaimer:</strong> {predictionDisclaimer}
               </p>
             )}
           </div>

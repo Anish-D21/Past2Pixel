@@ -114,14 +114,35 @@ export interface RestorationResponse {
   artifacts: {
     original: string;
     restored?: string | null;
+    baseline?: string | null;
+    model?: string | null;
+    text_mask?: string | null;
     damage_overlay?: string | null;
     damage_mask?: string | null;
+  };
+  candidate_selection?: {
+    selected_candidate: string;
+    selection_reason: string;
+    candidates_evaluated: Record<
+      string,
+      {
+        composite_score: number;
+        text_contrast: number;
+        stroke_sharpness: number;
+        stroke_preservation_ratio: number;
+        background_noise_std: number;
+      }
+    >;
+  };
+  text_protection?: {
+    ink_pixel_ratio: number;
+    ink_pixel_count: number;
   };
 }
 
 export interface OCRResult {
   session_id?: string | null;
-  status: 'SUCCESS' | 'UNAVAILABLE' | 'FAILED' | 'IMAGE_NOT_FOUND' | 'NO_LANGUAGE_DATA';
+  status: 'SUCCESS' | 'UNAVAILABLE' | 'FAILED' | 'IMAGE_NOT_FOUND' | 'NO_LANGUAGE_DATA' | 'MISSING_LANGUAGE_PACK';
   extracted_text: string;
   processing_time_ms: number;
   language_requested: string;
@@ -131,6 +152,19 @@ export interface OCRResult {
   mean_confidence?: number | null;
   is_authentic_ocr: boolean;
   image_source?: string | null;
+  preprocessing_applied?: string | null;
+  comparison_results?: Record<
+    string,
+    {
+      extracted_text: string;
+      character_count: number;
+      word_count: number;
+      mean_confidence?: number | null;
+      status: string;
+      image_file: string;
+      preprocessing_applied?: string | null;
+    }
+  > | null;
   error?: string | null;
   setup_instructions?: Record<string, any> | null;
 }
@@ -139,11 +173,14 @@ export interface OCRStatusInfo {
   status: 'READY' | 'LIMITED_LANGUAGES' | 'UNAVAILABLE';
   is_installed: boolean;
   tesseract_cmd: string | null;
+  tessdata_dir?: string | null;
   version: string | null;
   available_languages: string[];
+  supported_configurations?: string[];
   devanagari_support: boolean;
   has_sanskrit_pack: boolean;
   has_hindi_pack: boolean;
+  has_english_pack?: boolean;
   reason: string;
   setup_instructions?: Record<string, any> | null;
 }
@@ -151,6 +188,7 @@ export interface OCRStatusInfo {
 export interface TextPredictionCandidate {
   word: string;
   score: number;
+  evidence?: string | null;
 }
 
 export interface TextPredictionResponse {
@@ -163,6 +201,7 @@ export interface TextPredictionResponse {
   surrounding_context: {
     left_context: string;
     right_context: string;
+    uncertain_span?: string;
   };
 }
 
@@ -185,6 +224,9 @@ export interface SessionDetailResponse {
   artifacts: {
     original: string;
     restored?: string | null;
+    baseline?: string | null;
+    model?: string | null;
+    text_mask?: string | null;
     damage_overlay?: string | null;
     damage_mask?: string | null;
   };

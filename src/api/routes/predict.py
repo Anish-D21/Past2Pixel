@@ -61,24 +61,43 @@ def get_trained_predictor() -> ContextTextPredictor:
 @router.post("", response_model=TextPredictionResponse)
 def predict_missing_text(req: TextPredictionRequest):
     """
-    Predicts possible text completions for damaged or illegible manuscript regions.
+    Predicts possible text completions for damaged or illegible manuscript regions
+    directly from actual OCR-extracted or edited text.
     
     Academic Defensibility Rules:
-    - Predictions are strictly derived from surrounding context and corpus statistics.
+    - Operates on real OCR text and user-marked uncertain spans.
+    - Predictions are strictly derived from bidirectional context and corpus statistics.
     - Output is explicitly marked as speculative (is_speculative=True).
     - Never presented as authentic or historically verified original text.
     """
-    if not req.left_context.strip() and not req.right_context.strip():
+    left_ctx = (req.left_context or "").strip()
+    right_ctx = (req.right_context or "").strip()
+    target_span = (req.uncertain_span or "").strip()
+
+    # If full_text is provided, automatically extract authentic context around uncertain_span
+    if req.full_text and (target_span or req.span_index is not None):
+        extracted_left, actual_span, extracted_right = ContextTextPredictor.extract_context_from_text(
+            full_text=req.full_text,
+            target_span=target_span,
+            span_index=req.span_index,
+        )
+        if extracted_left or extracted_right:
+            left_ctx = extracted_left
+            right_ctx = extracted_right
+            target_span = actual_span
+
+    if not left_ctx and not right_ctx and not target_span:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one context span (left_context or right_context) must be provided for contextual prediction.",
+            detail="At least one context span (left_context, right_context) or full_text with uncertain_span must be provided for contextual prediction.",
         )
 
     predictor = get_trained_predictor()
 
     prediction_result = predictor.predict_missing_span(
-        left_context=req.left_context.strip(),
-        right_context=req.right_context.strip(),
+        left_context=left_ctx,
+        right_context=right_ctx,
+        uncertain_span=target_span,
         max_candidates=req.max_candidates,
     )
 
@@ -86,6 +105,11 @@ def predict_missing_text(req: TextPredictionRequest):
         TextPredictionCandidate(
             word=c.get("text", c.get("word", "")),
             score=round(float(c.get("context_score", c.get("score", 0.0))), 4),
+            evidence=(
+                f"{c.get('model_used', 'N-Gram')}: P(fwd)={c.get('forward_prob', 0):.2f}, P(rev)={c.get('backward_prob', 0):.2f}"
+                if "forward_prob" in c
+                else None
+            ),
         )
         for c in prediction_result.get("candidates", [])
     ]
@@ -101,7 +125,8 @@ def predict_missing_text(req: TextPredictionRequest):
             "it must never be presented as verified historical content without independent manuscript confirmation."
         ),
         surrounding_context={
-            "left_context": req.left_context,
-            "right_context": req.right_context,
+            "left_context": left_ctx,
+            "right_context": right_ctx,
+            "uncertain_span": target_span,
         },
     )

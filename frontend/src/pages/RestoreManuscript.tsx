@@ -87,6 +87,25 @@ export const RestoreManuscript: React.FC = () => {
     }
   };
 
+  const [activeSliderCandidate, setActiveSliderCandidate] = useState<'restored' | 'baseline' | 'model'>('restored');
+
+  const getSliderAfterImage = () => {
+    if (!result) return '';
+    if (activeSliderCandidate === 'baseline' && result.artifacts.baseline) {
+      return result.artifacts.baseline;
+    }
+    if (activeSliderCandidate === 'model' && result.artifacts.model) {
+      return result.artifacts.model;
+    }
+    return result.artifacts.restored || '';
+  };
+
+  const getSliderAfterLabel = () => {
+    if (activeSliderCandidate === 'baseline') return 'Traditional Enhancement Baseline';
+    if (activeSliderCandidate === 'model') return 'Deep Neural Model Output';
+    return `Final Selected Folio (${result?.candidate_selection?.selected_candidate || 'Text-Protected'})`;
+  };
+
   return (
     <div className="space-y-8 max-w-6xl mx-auto">
       {/* Title */}
@@ -95,7 +114,7 @@ export const RestoreManuscript: React.FC = () => {
           Manuscript Restoration Workspace
         </h1>
         <p className="text-xs text-stone-500 mt-1">
-          Paired deep neural restoration: U-Net feature skip-connections, damage localization & contrast enhancement
+          Conservative text-aware neural restoration: Sauvola ink protection, traditional illumination baseline & safe candidate selection
         </p>
       </div>
 
@@ -191,19 +210,19 @@ export const RestoreManuscript: React.FC = () => {
             <div className="text-xs text-stone-500 space-y-2 pt-2 border-t border-stone-100">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>Damage Localization (U-Net BCE/Dice)</span>
+                <span>Text-Aware Ink Protection Mask</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>Primary Restoration (Deep U-Net)</span>
+                <span>Illumination Normalization Baseline</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>Convolutional Autoencoder Baseline</span>
+                <span>Fully-Convolutional Native U-Net</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>Adaptive Contrast CLAHE Post-Processing</span>
+                <span>Objective Quality Evidence Gating</span>
               </div>
             </div>
           </div>
@@ -217,7 +236,7 @@ export const RestoreManuscript: React.FC = () => {
             {isProcessing ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Executing Neural Pipeline...</span>
+                <span>Executing Text-Aware Pipeline...</span>
               </>
             ) : (
               <>
@@ -263,27 +282,147 @@ export const RestoreManuscript: React.FC = () => {
             </div>
           </div>
 
-          {/* Interactive Split Slider */}
+          {/* Candidate Selection & Text Protection Decision Banner */}
+          {result.candidate_selection && (
+            <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/60 text-stone-800 space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-emerald-200/80 pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-emerald-900">
+                    Safe Candidate Selection:
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-800 text-white">
+                    {result.candidate_selection.selected_candidate}
+                  </span>
+                </div>
+                {result.text_protection && (
+                  <div className="text-xs text-stone-600 flex items-center gap-3 font-mono">
+                    <span>
+                      Ink Density: {(result.text_protection.ink_pixel_ratio * 100).toFixed(1)}%
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Stroke Protection: Active
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <p className="text-xs text-stone-700 leading-relaxed">
+                <strong className="text-stone-900 font-semibold">Selection Rationale: </strong>
+                {result.candidate_selection.selection_reason}
+              </p>
+
+              {/* Comparative Scores Grid */}
+              {result.candidate_selection.candidates_evaluated && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                  {Object.entries(result.candidate_selection.candidates_evaluated).map(([cand, metrics]) => {
+                    const isSelected = cand === result.candidate_selection?.selected_candidate;
+                    return (
+                      <div
+                        key={cand}
+                        className={`p-3 rounded-lg border text-xs space-y-1.5 transition ${
+                          isSelected
+                            ? 'bg-white border-emerald-500 shadow-xs ring-1 ring-emerald-500'
+                            : 'bg-stone-50/80 border-stone-200 text-stone-600'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between font-semibold">
+                          <span className="uppercase text-[11px] font-mono tracking-wider">
+                            {cand.replace('_', ' ')}
+                          </span>
+                          {isSelected && (
+                            <span className="text-[10px] text-emerald-700 font-bold">Selected</span>
+                          )}
+                        </div>
+                        <div className="space-y-0.5 font-mono text-[11px]">
+                          <div className="flex justify-between">
+                            <span className="text-stone-500">Composite Score:</span>
+                            <span className="font-bold text-stone-800">{metrics.composite_score.toFixed(3)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-stone-500">Text Contrast:</span>
+                            <span>{metrics.text_contrast.toFixed(3)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-stone-500">Stroke Sharpness:</span>
+                            <span>{metrics.stroke_sharpness.toFixed(3)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-stone-500">Background Noise:</span>
+                            <span>{metrics.background_noise_std.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Interactive Split Slider with Candidate Tabs */}
           {result.artifacts.restored && (
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Interactive Before / After Comparison Slider
-              </h3>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-500">
+                  Interactive Before / After Comparison Slider
+                </h3>
+                <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-lg border border-stone-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSliderCandidate('restored')}
+                    className={`px-2.5 py-1 rounded transition cursor-pointer font-medium ${
+                      activeSliderCandidate === 'restored'
+                        ? 'bg-white text-emerald-800 font-bold shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    Selected Restoration
+                  </button>
+                  {result.artifacts.baseline && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveSliderCandidate('baseline')}
+                      className={`px-2.5 py-1 rounded transition cursor-pointer font-medium ${
+                        activeSliderCandidate === 'baseline'
+                          ? 'bg-white text-emerald-800 font-bold shadow-xs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Traditional Baseline
+                    </button>
+                  )}
+                  {result.artifacts.model && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveSliderCandidate('model')}
+                      className={`px-2.5 py-1 rounded transition cursor-pointer font-medium ${
+                        activeSliderCandidate === 'model'
+                          ? 'bg-white text-emerald-800 font-bold shadow-xs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Neural Model Output
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <ImageComparisonSlider
                 beforeImage={result.artifacts.original}
-                afterImage={result.artifacts.restored}
+                afterImage={getSliderAfterImage()}
                 beforeLabel="Original Damaged Manuscript"
-                afterLabel="Restored Folio (U-Net Deep Restoration)"
+                afterLabel={getSliderAfterLabel()}
                 className="h-[460px] w-full"
               />
             </div>
           )}
 
-          {/* Artifacts Cards: Original, Damage Mask, Overlay, Restored */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* 1. Original */}
+          {/* Comprehensive 6-Artifact Inspection Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* 1. Original Input */}
             <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
-              <div className="text-xs font-semibold text-stone-700">1. Original Input</div>
+              <div className="text-xs font-semibold text-stone-700">1. Original Folio Input</div>
               <ArtifactImage
                 src={result.artifacts.original}
                 alt="Original"
@@ -291,10 +430,28 @@ export const RestoreManuscript: React.FC = () => {
               />
             </div>
 
-            {/* 2. Damage Mask */}
+            {/* 2. Text Protection Ink Mask */}
             <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
               <div className="flex items-center justify-between text-xs font-semibold text-stone-700">
-                <span>2. Detected Damage Mask</span>
+                <span>2. Text Protection Ink Mask</span>
+                {result.text_protection && (
+                  <span className="text-[11px] text-emerald-800 font-mono">
+                    {(result.text_protection.ink_pixel_ratio * 100).toFixed(1)}% ink
+                  </span>
+                )}
+              </div>
+              <ArtifactImage
+                src={result.artifacts.text_mask || ''}
+                alt="Text Mask"
+                className="h-44 w-full object-contain rounded bg-stone-900 border border-stone-100"
+                fallbackLabel="Text Mask Unavailable"
+              />
+            </div>
+
+            {/* 3. Damage Mask */}
+            <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-stone-700">
+                <span>3. Damage Localization Mask</span>
                 <span className="text-[11px] text-amber-700 font-mono">
                   {result.damage_detection?.damaged_pixel_percentage?.toFixed(1)}%
                 </span>
@@ -307,20 +464,30 @@ export const RestoreManuscript: React.FC = () => {
               />
             </div>
 
-            {/* 3. Damage Overlay */}
+            {/* 4. Traditional Baseline */}
             <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
-              <div className="text-xs font-semibold text-stone-700">3. Damage Heatmap Overlay</div>
+              <div className="text-xs font-semibold text-stone-700">4. Traditional Baseline</div>
               <ArtifactImage
-                src={result.artifacts.damage_overlay}
-                alt="Damage Overlay"
-                fallbackLabel="Heatmap Overlay Unavailable"
+                src={result.artifacts.baseline || ''}
+                alt="Baseline Restoration"
+                fallbackLabel="Baseline Unavailable"
               />
             </div>
 
-            {/* 4. Restored Folio */}
+            {/* 5. Deep Neural Model Output */}
+            <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
+              <div className="text-xs font-semibold text-stone-700">5. Neural Model Output</div>
+              <ArtifactImage
+                src={result.artifacts.model || ''}
+                alt="Model Output"
+                fallbackLabel="Model Output Unavailable"
+              />
+            </div>
+
+            {/* 6. Selected Restored Folio */}
             <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
               <div className="flex items-center justify-between text-xs font-semibold text-stone-700">
-                <span>4. Restored Folio</span>
+                <span>6. Final Selected Restored Folio</span>
                 <StatusBadge status={result.restoration?.model_readiness || 'READY'} size="sm" />
               </div>
               <ArtifactImage

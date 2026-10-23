@@ -155,3 +155,66 @@ def test_ocr_cer_wer_evaluation():
     eval_diff = engine.evaluate_ocr(pred_diff, gt)
     assert eval_diff["character_error_rate"] > 0.0
     assert eval_diff["is_exact_match"] is False
+
+
+def test_missing_language_pack_behavior():
+    """Verify that requesting an uninstalled language pack returns MISSING_LANGUAGE_PACK."""
+    img = Image.new("RGB", (100, 40), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    # 'xyz' is guaranteed not to exist
+    res = client.post(
+        "/api/ocr/direct",
+        files={"file": ("test.png", buf, "image/png")},
+        data={"language": "xyz_nonexistent_pack"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "MISSING_LANGUAGE_PACK"
+    assert "xyz_nonexistent_pack" in data["error"]
+    assert data["setup_instructions"] is not None
+
+
+def test_supported_configurations_returned():
+    """Verify status response includes supported_configurations list."""
+    res = client.get("/api/ocr/status")
+    assert res.status_code == 200
+    data = res.json()
+    assert "supported_configurations" in data
+    assert isinstance(data["supported_configurations"], list)
+
+
+def test_direct_ocr_with_preprocessing():
+    """Verify that preprocessing options are accepted and reported in direct OCR."""
+    img = Image.new("RGB", (150, 50), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.text((10, 10), "Test", fill=(0, 0, 0))
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    res = client.post(
+        "/api/ocr/direct",
+        files={"file": ("test.png", buf, "image/png")},
+        data={"language": "eng", "preprocessing": "contrast"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data.get("preprocessing_applied") == "contrast"
+
+
+def test_unicode_nfc_preservation():
+    """Verify Devanagari text is preserved in Unicode canonical NFC form."""
+    import unicodedata
+    # Construct NFD (decomposed) string
+    nfd_text = unicodedata.normalize("NFD", "अग्निमीळे पुरोहितं")
+    nfc_text = unicodedata.normalize("NFC", nfd_text)
+    
+    # Engine evaluation must normalize consistently
+    engine = OCREngine()
+    eval_res = engine.evaluate_ocr(nfd_text, nfc_text)
+    assert eval_res["character_error_rate"] == 0.0
+    assert eval_res["is_exact_match"] is True

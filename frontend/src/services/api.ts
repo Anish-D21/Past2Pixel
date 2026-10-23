@@ -7,6 +7,7 @@ import {
   RestorationSession,
   SessionDetailResponse,
   SystemStatus,
+  TextPredictionResponse,
   UploadResponse,
   User,
 } from '../types/api';
@@ -141,7 +142,8 @@ export const api = {
     extractText: (
       sessionId: string,
       language: string = 'san+hin',
-      targetImage: 'restored' | 'original' = 'restored'
+      targetImage: 'restored' | 'original' | 'baseline' | 'model' | 'compare_all' = 'restored',
+      preprocessing: string = 'none'
     ): Promise<OCRResult> =>
       request<OCRResult>('/ocr', {
         method: 'POST',
@@ -149,13 +151,19 @@ export const api = {
           session_id: sessionId,
           language: language,
           target_image: targetImage,
+          preprocessing: preprocessing,
         }),
       }),
 
-    extractDirect: (file: File, language: string = 'san+hin'): Promise<OCRResult> => {
+    extractDirect: (
+      file: File,
+      language: string = 'san+hin',
+      preprocessing: string = 'none'
+    ): Promise<OCRResult> => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('language', language);
+      formData.append('preprocessing', preprocessing);
       return request<OCRResult>('/ocr/direct', {
         method: 'POST',
         body: formData,
@@ -166,11 +174,14 @@ export const api = {
   // Context-Aware Linguistic Text Prediction
   prediction: {
     predictText: (data: {
-      left_context: string;
-      right_context: string;
+      left_context?: string;
+      right_context?: string;
+      uncertain_span?: string;
+      full_text?: string;
+      span_index?: number;
       max_candidates?: number;
-    }): Promise<any> =>
-      request<any>('/predict-text', {
+    }): Promise<TextPredictionResponse> =>
+      request<TextPredictionResponse>('/predict-text', {
         method: 'POST',
         body: JSON.stringify(data),
       }),

@@ -77,6 +77,9 @@ def run_restoration_pipeline(
     artifacts = {
         "original": f"/static/sessions/{sid}/original.png",
         "restored": f"/static/sessions/{sid}/restored_unet.png",
+        "baseline": f"/static/sessions/{sid}/restored_baseline.png",
+        "model": f"/static/sessions/{sid}/restored_model.png",
+        "text_mask": f"/static/sessions/{sid}/text_mask.png",
         "damage_overlay": f"/static/sessions/{sid}/damage_overlay.png",
         "damage_mask": f"/static/sessions/{sid}/damage_mask.png",
     }
@@ -90,6 +93,8 @@ def run_restoration_pipeline(
             "model_readiness": report["model_readiness"],
             "damage_detection": report["damage_detection_result"],
             "restoration": report["restoration_results"],
+            "candidate_selection": report.get("candidate_selection"),
+            "text_protection": report.get("text_protection_metrics"),
         },
     }
     db_manager.update_session(req.session_id, db_update)
@@ -102,5 +107,7 @@ def run_restoration_pipeline(
         model_readiness=report["model_readiness"],
         damage_detection=report["damage_detection_result"],
         restoration=report["restoration_results"],
+        candidate_selection=report.get("candidate_selection"),
+        text_protection=report.get("text_protection_metrics"),
         artifacts=artifacts,
     )

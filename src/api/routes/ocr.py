@@ -72,10 +72,47 @@ def run_ocr_on_session(
 
     # Preferred image selection: restored image preferred if present, otherwise original
     restored_path = session_dir / "restored_unet.png"
+    baseline_path = session_dir / "restored_baseline.png"
+    model_path = session_dir / "restored_model.png"
     original_path = session_dir / "original.png"
 
-    target_choice = getattr(req, "target_image", "restored") or "restored"
-    if target_choice == "original" and original_path.exists():
+    target_choice = (getattr(req, "target_image", "restored") or "restored").lower().strip()
+
+    # 1. Multi-candidate comparative OCR evaluation
+    comparison_results = None
+    preprocessing_mode = getattr(req, "preprocessing", "none") or "none"
+
+    if target_choice == "compare_all":
+        comparison_results = {}
+        candidate_paths = {
+            "original": original_path,
+            "baseline": baseline_path if baseline_path.exists() else original_path,
+            "model": model_path if model_path.exists() else original_path,
+            "selected_restoration": restored_path if restored_path.exists() else original_path,
+        }
+        for c_name, c_path in candidate_paths.items():
+            if c_path.exists():
+                c_res = ocr_engine.extract_text(c_path, lang=req.language, preprocessing=preprocessing_mode)
+                comparison_results[c_name] = {
+                    "extracted_text": c_res["extracted_text"],
+                    "character_count": c_res["character_count"],
+                    "word_count": c_res["word_count"],
+                    "mean_confidence": c_res.get("mean_confidence"),
+                    "status": c_res["status"],
+                    "image_file": c_path.name,
+                    "preprocessing_applied": c_res.get("preprocessing_applied", "none"),
+                }
+
+        # Main result defaults to selected restoration
+        img_path = restored_path if restored_path.exists() else original_path
+        image_source = img_path.name
+    elif target_choice in ("baseline", "traditional_baseline") and baseline_path.exists():
+        img_path = baseline_path
+        image_source = "restored_baseline.png"
+    elif target_choice in ("model", "model_guided") and model_path.exists():
+        img_path = model_path
+        image_source = "restored_model.png"
+    elif target_choice == "original" and original_path.exists():
         img_path = original_path
         image_source = "original.png"
     elif restored_path.exists():
@@ -91,9 +128,11 @@ def run_ocr_on_session(
         )
 
     # Run OCR extraction
-    ocr_result = ocr_engine.extract_text(img_path, lang=req.language)
+    ocr_result = ocr_engine.extract_text(img_path, lang=req.language, preprocessing=preprocessing_mode)
     ocr_result["session_id"] = clean_session_id
     ocr_result["image_source"] = image_source
+    if comparison_results:
+        ocr_result["comparison_results"] = comparison_results
 
     # Update session in DB
     db_manager.update_session(clean_session_id, {"ocr_result": ocr_result, "status": "OCR_PROCESSED"})
@@ -110,6 +149,8 @@ def run_ocr_on_session(
         mean_confidence=ocr_result.get("mean_confidence"),
         is_authentic_ocr=ocr_result["is_authentic_ocr"],
         image_source=image_source,
+        preprocessing_applied=ocr_result.get("preprocessing_applied", "none"),
+        comparison_results=comparison_results,
         error=ocr_result.get("error"),
         setup_instructions=ocr_result.get("setup_instructions"),
     )
@@ -118,7 +159,8 @@ def run_ocr_on_session(
 @router.post("/direct", response_model=OCRResponse)
 async def run_direct_ocr(
     file: UploadFile = File(..., description="Document image file for instant OCR extraction"),
-    language: str = Form("san+hin+eng", description="Tesseract language code"),
+    language: str = Form("san+hin", description="Tesseract language code"),
+    preprocessing: str = Form("none", description="Preprocessing variant: 'none', 'auto', 'contrast', 'illumination', 'binarize', 'upscale'"),
 ):
     """
     Directly extracts machine-readable text from an uploaded image without requiring a session.
@@ -132,7 +174,7 @@ async def run_direct_ocr(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid image file: {e}")
 
-    ocr_result = ocr_engine.extract_text(pil_img, lang=language)
+    ocr_result = ocr_engine.extract_text(pil_img, lang=language, preprocessing=preprocessing)
 
     return OCRResponse(
         session_id=None,
@@ -146,6 +188,7 @@ async def run_direct_ocr(
         mean_confidence=ocr_result.get("mean_confidence"),
         is_authentic_ocr=ocr_result["is_authentic_ocr"],
         image_source="direct_upload",
+        preprocessing_applied=ocr_result.get("preprocessing_applied", "none"),
         error=ocr_result.get("error"),
         setup_instructions=ocr_result.get("setup_instructions"),
     )

@@ -71,22 +71,25 @@ class UploadResponse(BaseModel):
 # -------------------------------------------------------------
 class OCRRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Existing session ID to run OCR on")
-    language: str = Field("san+hin+eng", description="Language pack codes for Tesseract")
-    target_image: Optional[str] = Field("restored", description="Target image: 'restored' (uses restored_unet.png if present) or 'original'")
+    language: str = Field("san+hin", description="Language pack codes for Tesseract")
+    target_image: Optional[str] = Field("restored", description="Target image: 'restored', 'original', 'baseline', 'model', or 'compare_all'")
+    preprocessing: Optional[str] = Field("none", description="Controlled OCR preprocessing: 'none', 'auto', 'contrast', 'illumination', 'binarize', 'upscale'")
 
 
 class OCRResponse(BaseModel):
     session_id: Optional[str] = Field(None, description="Associated session ID")
-    status: str = Field(..., description="SUCCESS, UNAVAILABLE, or FAILED")
+    status: str = Field(..., description="SUCCESS, UNAVAILABLE, FAILED, or MISSING_LANGUAGE_PACK")
     extracted_text: str = Field("", description="Raw Unicode extracted text from visible characters")
     processing_time_ms: float = Field(0.0, description="Measured OCR duration in milliseconds")
-    language_requested: str = Field("san+hin+eng", description="Requested language string")
+    language_requested: str = Field("san+hin", description="Requested language string")
     language_used: Optional[str] = Field(None, description="Actual language pack used")
     character_count: int = Field(0, description="Total characters extracted")
     word_count: int = Field(0, description="Total words extracted")
     mean_confidence: Optional[float] = Field(None, description="Mean character confidence percentage")
     is_authentic_ocr: bool = Field(False, description="True if extracted from real engine, False if unavailable")
-    image_source: Optional[str] = Field(None, description="Image source used for OCR ('restored_unet.png' or 'original.png')")
+    image_source: Optional[str] = Field(None, description="Image source used for OCR ('restored_unet.png', 'original.png', etc.)")
+    preprocessing_applied: Optional[str] = Field("none", description="Image preprocessing mode applied")
+    comparison_results: Optional[Dict[str, Any]] = Field(None, description="Candidate-by-candidate OCR extraction comparison when compare_all is used")
     error: Optional[str] = Field(None, description="Error or reason if unavailable")
     setup_instructions: Optional[Dict[str, Any]] = Field(None, description="Setup instructions if OCR unavailable")
 
@@ -107,6 +110,8 @@ class RestorationResponse(BaseModel):
     model_readiness: Dict[str, str] = Field(..., description="Status of models (READY vs UNTRAINED)")
     damage_detection: Dict[str, Any] = Field(..., description="Damage localization metrics and percentage")
     restoration: Dict[str, Any] = Field(..., description="Restoration metrics and output details")
+    candidate_selection: Optional[Dict[str, Any]] = Field(None, description="Evidence-based candidate selection decision and comparative metrics")
+    text_protection: Optional[Dict[str, Any]] = Field(None, description="High-resolution ink stroke protection metrics")
     artifacts: Dict[str, Optional[str]] = Field(..., description="Relative or absolute URLs to output images")
 
 
@@ -114,14 +119,18 @@ class RestorationResponse(BaseModel):
 # Damaged-Text Prediction Schemas
 # -------------------------------------------------------------
 class TextPredictionRequest(BaseModel):
-    left_context: str = Field(..., description="Readable text preceding the damaged span")
-    right_context: str = Field(..., description="Readable text following the damaged span")
-    max_candidates: int = Field(3, ge=1, le=10, description="Maximum candidate predictions to return")
+    left_context: Optional[str] = Field("", description="Readable text preceding the damaged span")
+    right_context: Optional[str] = Field("", description="Readable text following the damaged span")
+    uncertain_span: Optional[str] = Field(None, description="The specific damaged or uncertain word/phrase (e.g. [?], ..., or partial word)")
+    full_text: Optional[str] = Field(None, description="Current full OCR-extracted or edited text")
+    span_index: Optional[int] = Field(None, description="Zero-based token index of the uncertain span in full_text")
+    max_candidates: int = Field(4, ge=1, le=10, description="Maximum candidate predictions to return")
 
 
 class TextPredictionCandidate(BaseModel):
     word: str = Field(..., description="Predicted candidate word")
     score: float = Field(..., description="Relative n-gram likelihood / frequency score")
+    evidence: Optional[str] = Field(None, description="Model explanation / probability breakdown")
 
 
 class TextPredictionResponse(BaseModel):

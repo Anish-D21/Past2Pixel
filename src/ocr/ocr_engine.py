@@ -12,15 +12,17 @@ from PIL import Image
 import pytesseract
 from pytesseract import Output
 
+import unicodedata
 from ..core.config import settings
 from ..prediction.context_predictor import calculate_cer, calculate_wer
+from .ocr_preprocessor import ocr_preprocessor
 
 
 class OCREngine:
     """
     Manages Tesseract OCR execution for Vedic Sanskrit and Devanagari manuscripts.
-    Detects local binaries, validates language packs, handles errors without fabricating data,
-    and calculates scientific character/word error metrics.
+    Detects local binaries, validates language packs strictly without silent substitution,
+    handles errors without fabricating data, and calculates scientific character/word error metrics.
     """
 
     WINDOWS_DEFAULT_PATHS = [
@@ -33,6 +35,7 @@ class OCREngine:
     def __init__(self, tesseract_cmd: Optional[str] = None):
         self.configured_cmd = tesseract_cmd or settings.TESSERACT_CMD
         self.tesseract_cmd: Optional[str] = None
+        self.tessdata_dir: Optional[str] = None
         self.is_installed: bool = False
         self.version: Optional[str] = None
         self.available_languages: List[str] = []
@@ -70,18 +73,23 @@ class OCREngine:
             
             # Configure TESSDATA_PREFIX if adjacent tessdata directory exists
             tessdata_dir = Path(candidate).parent / "tessdata"
-            if tessdata_dir.is_dir() and "TESSDATA_PREFIX" not in os.environ:
-                os.environ["TESSDATA_PREFIX"] = str(tessdata_dir)
+            if tessdata_dir.is_dir():
+                self.tessdata_dir = str(tessdata_dir.resolve())
+                if "TESSDATA_PREFIX" not in os.environ:
+                    os.environ["TESSDATA_PREFIX"] = self.tessdata_dir
+            else:
+                self.tessdata_dir = os.environ.get("TESSDATA_PREFIX", None)
 
             try:
                 ver = pytesseract.get_tesseract_version()
                 self.version = str(ver)
-                self.available_languages = pytesseract.get_languages()
+                self.available_languages = sorted(pytesseract.get_languages())
                 self.is_installed = True
             except Exception:
                 self.is_installed = False
         else:
             self.tesseract_cmd = None
+            self.tessdata_dir = None
             self.is_installed = False
             self.version = None
             self.available_languages = []
@@ -103,6 +111,24 @@ class OCREngine:
             "download_url": "https://github.com/UB-Mannheim/tesseract/wiki",
         }
 
+    def get_supported_configurations(self) -> List[str]:
+        """Returns only configurations where all component language packs are actually installed."""
+        available_set = set(self.available_languages)
+        configs = []
+        if "san" in available_set:
+            configs.append("san")
+        if "hin" in available_set:
+            configs.append("hin")
+        if "eng" in available_set:
+            configs.append("eng")
+        if "san" in available_set and "hin" in available_set:
+            configs.append("san+hin")
+        if "hin" in available_set and "eng" in available_set:
+            configs.append("hin+eng")
+        if "san" in available_set and "hin" in available_set and "eng" in available_set:
+            configs.append("san+hin+eng")
+        return configs
+
     def get_status(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Returns deep diagnostic report of OCR engine availability and language capabilities."""
         if force_refresh or not self.is_installed:
@@ -110,6 +136,7 @@ class OCREngine:
 
         has_san = "san" in self.available_languages
         has_hin = "hin" in self.available_languages
+        has_eng = "eng" in self.available_languages
         has_deva = any("deva" in lang.lower() for lang in self.available_languages)
         devanagari_ready = has_san or has_hin or has_deva
 
@@ -127,11 +154,14 @@ class OCREngine:
             "status": status_code,
             "is_installed": self.is_installed,
             "tesseract_cmd": self.tesseract_cmd,
+            "tessdata_dir": self.tessdata_dir,
             "version": self.version,
             "available_languages": self.available_languages,
+            "supported_configurations": self.get_supported_configurations(),
             "devanagari_support": devanagari_ready,
             "has_sanskrit_pack": has_san,
             "has_hindi_pack": has_hin,
+            "has_english_pack": has_eng,
             "reason": reason,
             "setup_instructions": None if status_code == "READY" else self.get_setup_instructions(),
         }
@@ -139,11 +169,13 @@ class OCREngine:
     def extract_text(
         self,
         image: Union[Image.Image, Path, str],
-        lang: str = "san+hin+eng",
+        lang: str = "san+hin",
+        preprocessing: str = "none",
     ) -> Dict[str, Any]:
         """
         Executes OCR extraction on a document image.
-        Captures execution time, preserves Unicode characters, and never fabricates output.
+        Captures execution time, preserves Unicode NFC characters, validates language packs strictly,
+        and never silently substitutes English for Sanskrit.
         """
         status_info = self.get_status()
         if not self.is_installed:
@@ -156,6 +188,7 @@ class OCREngine:
                 "character_count": 0,
                 "word_count": 0,
                 "mean_confidence": None,
+                "preprocessing_applied": preprocessing,
                 "is_authentic_ocr": False,
                 "error": "Tesseract OCR engine is not installed on this machine.",
                 "setup_instructions": status_info["setup_instructions"],
@@ -169,6 +202,12 @@ class OCREngine:
                     "status": "IMAGE_NOT_FOUND",
                     "extracted_text": "",
                     "processing_time_ms": 0.0,
+                    "language_requested": lang,
+                    "language_used": None,
+                    "character_count": 0,
+                    "word_count": 0,
+                    "mean_confidence": None,
+                    "preprocessing_applied": preprocessing,
                     "error": f"Image file not found at {img_path}",
                     "is_authentic_ocr": False,
                 }
@@ -176,42 +215,51 @@ class OCREngine:
         else:
             pil_img = image.convert("RGB")
 
-        # Determine best available language string
+        # Validate language pack strictly — never silently substitute English or missing packs
         available_set = set(self.available_languages)
-        requested_tokens = [t.strip() for t in lang.split("+")]
-        valid_tokens = [t for t in requested_tokens if t in available_set]
+        requested_tokens = [t.strip() for t in lang.split("+") if t.strip()]
+        if not requested_tokens:
+            requested_tokens = ["san"]
 
-        if not valid_tokens:
-            if "san" in available_set:
-                valid_tokens = ["san"]
-            elif "hin" in available_set:
-                valid_tokens = ["hin"]
-            elif "eng" in available_set:
-                valid_tokens = ["eng"]
-            elif self.available_languages:
-                valid_tokens = [self.available_languages[0]]
-            else:
-                return {
-                    "status": "NO_LANGUAGE_DATA",
-                    "extracted_text": "",
-                    "processing_time_ms": 0.0,
-                    "error": "No language data files available in Tesseract tessdata directory.",
-                    "is_authentic_ocr": False,
-                }
+        missing_tokens = [t for t in requested_tokens if t not in available_set]
+        if missing_tokens:
+            missing_str = ", ".join(f"'{t}'" for t in missing_tokens)
+            avail_str = ", ".join(sorted(available_set)) if available_set else "None"
+            return {
+                "status": "MISSING_LANGUAGE_PACK",
+                "extracted_text": "",
+                "processing_time_ms": 0.0,
+                "language_requested": lang,
+                "language_used": None,
+                "character_count": 0,
+                "word_count": 0,
+                "mean_confidence": None,
+                "preprocessing_applied": preprocessing,
+                "is_authentic_ocr": False,
+                "error": (
+                    f"Requested OCR language pack {missing_str} is not installed in Tesseract tessdata directory "
+                    f"({self.tessdata_dir or 'unknown'}). Installed packs: {avail_str}. "
+                    f"Please install {missing_str}.traineddata to execute this extraction."
+                ),
+                "setup_instructions": self.get_setup_instructions(),
+            }
 
-        effective_lang = "+".join(valid_tokens)
+        effective_lang = "+".join(requested_tokens)
+
+        # Apply controlled OCR preprocessing without modifying the original image
+        processed_img, applied_mode = ocr_preprocessor.apply_mode(pil_img, mode=preprocessing)
 
         # Run OCR with execution timing
         start_t = time.perf_counter()
         try:
-            # 1. Standard text extraction
-            extracted = pytesseract.image_to_string(pil_img, lang=effective_lang)
-            clean_text = extracted.strip()
+            # 1. Standard text extraction with Unicode NFC normalization
+            extracted = pytesseract.image_to_string(processed_img, lang=effective_lang)
+            clean_text = unicodedata.normalize("NFC", extracted).strip()
 
             # 2. Extract word-level confidence
             mean_conf = None
             try:
-                data = pytesseract.image_to_data(pil_img, lang=effective_lang, output_type=Output.DICT)
+                data = pytesseract.image_to_data(processed_img, lang=effective_lang, output_type=Output.DICT)
                 confs = [float(c) for c in data.get("conf", []) if str(c).replace("-", "").isdigit() and float(c) >= 0]
                 if confs:
                     mean_conf = round(sum(confs) / len(confs), 2)
@@ -229,6 +277,7 @@ class OCREngine:
                 "character_count": len(clean_text),
                 "word_count": len(clean_text.split()),
                 "mean_confidence": mean_conf,
+                "preprocessing_applied": applied_mode,
                 "is_authentic_ocr": True,
                 "error": None,
             }
@@ -243,6 +292,7 @@ class OCREngine:
                 "character_count": 0,
                 "word_count": 0,
                 "mean_confidence": None,
+                "preprocessing_applied": applied_mode,
                 "is_authentic_ocr": False,
                 "error": f"Tesseract execution error: {str(e)}",
             }

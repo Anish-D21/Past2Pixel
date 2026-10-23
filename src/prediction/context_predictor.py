@@ -64,18 +64,73 @@ class ContextTextPredictor:
             "unique_contexts": len(self.word_ngrams),
         }
 
+    @staticmethod
+    def extract_context_from_text(
+        full_text: str,
+        target_span: str,
+        span_index: Optional[int] = None,
+        context_window_words: int = 4,
+    ) -> Tuple[str, str, str]:
+        """
+        Extracts surrounding left and right context words for an uncertain word/span
+        directly from actual OCR-extracted or edited text.
+        Returns: (left_context, actual_span, right_context)
+        """
+        import unicodedata
+        normalized_full = unicodedata.normalize("NFC", full_text.strip())
+        normalized_target = unicodedata.normalize("NFC", target_span.strip())
+
+        words = [w for w in re.split(r"(\s+|[।॥,;]+)", normalized_full) if w.strip()]
+        if not words:
+            return "", target_span, ""
+
+        # Locate word index
+        target_idx = -1
+        if span_index is not None and 0 <= span_index < len(words):
+            target_idx = span_index
+        else:
+            # Search for matching word token
+            for i, w in enumerate(words):
+                if w == normalized_target or normalized_target in w or w in normalized_target:
+                    target_idx = i
+                    break
+
+        if target_idx == -1:
+            # Fallback: substring split if possible
+            if normalized_target in normalized_full:
+                parts = normalized_full.split(normalized_target, 1)
+                left_part = parts[0].strip()
+                right_part = parts[1].strip()
+                left_w = [w for w in re.split(r"[\s,।॥]+", left_part) if w][-context_window_words:]
+                right_w = [w for w in re.split(r"[\s,।॥]+", right_part) if w][:context_window_words]
+                return " ".join(left_w), normalized_target, " ".join(right_w)
+            return "", target_span, ""
+
+        actual_span = words[target_idx]
+        left_slice = words[max(0, target_idx - context_window_words) : target_idx]
+        right_slice = words[target_idx + 1 : min(len(words), target_idx + 1 + context_window_words)]
+
+        return " ".join(left_slice), actual_span, " ".join(right_slice)
+
     def predict_missing_span(
         self,
         left_context: str,
         right_context: str,
-        max_candidates: int = 3,
-        min_confidence: float = 0.15,
+        uncertain_span: Optional[str] = None,
+        max_candidates: int = 4,
+        min_confidence: float = 0.05,
     ) -> Dict[str, Any]:
         """
-        Suggests candidate completions for a missing/damaged span between left_context and right_context.
+        Suggests candidate completions for a missing/damaged span between left_context and right_context,
+        optionally constrained by surviving character fragments in uncertain_span.
         
         Returns structured prediction marked as SPECULATIVE with explicit uncertainty flags.
         """
+        import unicodedata
+        norm_left = unicodedata.normalize("NFC", left_context.strip())
+        norm_right = unicodedata.normalize("NFC", right_context.strip())
+        norm_span = unicodedata.normalize("NFC", (uncertain_span or "").strip())
+
         if not self.is_fitted:
             return {
                 "status": "UNAVAILABLE",
@@ -85,7 +140,8 @@ class ContextTextPredictor:
                 "is_speculative": True,
             }
 
-        left_words = [w for w in re.split(r"[\s,।॥]+", left_context) if w]
+        # 1. Left-context n-gram extraction
+        left_words = [w for w in re.split(r"[\s,।॥]+", norm_left) if w]
         if not left_words:
             ctx = ("<s>",) if self.n == 2 else ("<s>", "<s>")
         elif len(left_words) == 1:
@@ -94,59 +150,113 @@ class ContextTextPredictor:
             ctx = tuple(left_words[-(self.n - 1) :])
 
         candidates_counter = self.word_ngrams.get(ctx, Counter())
+        total_ctx = sum(candidates_counter.values()) if candidates_counter else 0
 
-        if not candidates_counter:
-            # Fallback to unigram backoff
-            top_unigrams = self.vocabulary.most_common(max_candidates)
-            if not top_unigrams:
-                return {
-                    "status": "INSUFFICIENT_CONTEXT",
-                    "reason": "Context is too sparse to provide a mathematically defensible prediction.",
-                    "candidates": [],
-                    "prediction": None,
-                    "is_speculative": True,
-                }
-            candidates = []
-            total_vocab_occ = sum(self.vocabulary.values())
-            for word, count in top_unigrams:
-                if word not in ["<s>", "</s>"]:
-                    candidates.append({
-                        "text": word,
-                        "context_score": round(count / total_vocab_occ, 3),
-                        "model_used": "Unigram Backoff",
-                    })
-        else:
-            total_ctx = sum(candidates_counter.values())
-            candidates = []
-            for word, count in candidates_counter.most_common(max_candidates):
-                if word not in ["<s>", "</s>"]:
-                    candidates.append({
-                        "text": word,
-                        "context_score": round(count / total_ctx, 3),
-                        "model_used": f"{self.n}-gram Language Model",
-                    })
+        # 2. Right-context word for bidirectional scoring
+        right_words = [w for w in re.split(r"[\s,।॥]+", norm_right) if w]
+        next_word = right_words[0] if right_words else None
 
-        # Apply minimum confidence cutoff
-        filtered = [c for c in candidates if c["context_score"] >= min_confidence]
-        if not filtered:
+        # Clean surviving characters in uncertain_span (strip placeholder markers like ?, [], ...)
+        clean_prefix = re.sub(r"[\[\]\?\.\_\s\(\)]+", "", norm_span)
+
+        # 3. Candidate generation pool
+        candidate_pool = set()
+        for w, _ in candidates_counter.most_common(20):
+            if w not in ["<s>", "</s>"]:
+                candidate_pool.add(w)
+
+        # Also add unigram backoff candidates if pool is small
+        if len(candidate_pool) < max_candidates * 2:
+            for w, _ in self.vocabulary.most_common(max_candidates * 4):
+                if w not in ["<s>", "</s>"]:
+                    candidate_pool.add(w)
+
+        # If prefix/fragment exists, also include vocabulary words starting with fragment
+        if clean_prefix and len(clean_prefix) >= 2:
+            for w in self.vocabulary:
+                if w.startswith(clean_prefix) and w not in ["<s>", "</s>"]:
+                    candidate_pool.add(w)
+
+        if not candidate_pool:
             return {
-                "status": "LOW_CONFIDENCE",
-                "reason": f"Top candidate confidence below threshold ({min_confidence}). No reliable prediction.",
-                "candidates": candidates,
+                "status": "INSUFFICIENT_CONTEXT",
+                "reason": "Context is too sparse to provide a mathematically defensible prediction.",
+                "candidates": [],
                 "prediction": None,
                 "is_speculative": True,
             }
 
-        best = filtered[0]
+        # 4. Bidirectional scoring for each candidate
+        total_vocab_occ = max(sum(self.vocabulary.values()), 1)
+        scored_candidates = []
+
+        for cand in candidate_pool:
+            # A. Left-context transition probability
+            p_left = (candidates_counter.get(cand, 0) / total_ctx) if total_ctx > 0 else 0.0
+            p_unigram = self.vocabulary.get(cand, 0) / total_vocab_occ
+
+            # Combined forward probability (Jelinek-Mercer style interpolation)
+            forward_prob = 0.75 * p_left + 0.25 * p_unigram
+
+            # B. Right-context subsequent transition probability P(next_word | cand)
+            backward_prob = 0.0
+            if next_word:
+                cand_subsequent = self.word_ngrams.get((cand,), Counter())
+                cand_subsequent_bi = self.word_ngrams.get(("<s>", cand), Counter())
+                sub_count = cand_subsequent.get(next_word, 0) + cand_subsequent_bi.get(next_word, 0)
+                sub_total = sum(cand_subsequent.values()) + sum(cand_subsequent_bi.values())
+                if sub_total > 0:
+                    backward_prob = sub_count / sub_total
+
+            # C. Partial fragment similarity bonus
+            fragment_match = 1.0
+            if clean_prefix:
+                if cand == clean_prefix:
+                    fragment_match = 2.0
+                elif cand.startswith(clean_prefix):
+                    fragment_match = 1.5
+                elif clean_prefix in cand:
+                    fragment_match = 1.2
+                else:
+                    fragment_match = 0.5  # Penalize if does not match visible letters
+
+            # Composite bidirectional score
+            if next_word and backward_prob > 0:
+                composite_score = (0.55 * forward_prob + 0.45 * backward_prob) * fragment_match
+            else:
+                composite_score = forward_prob * fragment_match
+
+            scored_candidates.append({
+                "text": cand,
+                "context_score": round(float(composite_score), 4),
+                "model_used": "Bidirectional N-Gram" if (next_word and backward_prob > 0) else f"{self.n}-gram Language Model",
+                "forward_prob": round(float(forward_prob), 4),
+                "backward_prob": round(float(backward_prob), 4),
+            })
+
+        # Sort descending by composite score
+        scored_candidates.sort(key=lambda x: x["context_score"], reverse=True)
+        top_candidates = scored_candidates[:max_candidates]
+
+        # Apply minimum confidence cutoff
+        filtered = [c for c in top_candidates if c["context_score"] >= min_confidence]
+        if not filtered and top_candidates:
+            filtered = [top_candidates[0]]
+
+        best = filtered[0] if filtered else None
         return {
-            "status": "PREDICTED",
-            "prediction": best["text"],
-            "confidence_score": best["context_score"],
+            "status": "PREDICTED" if best else "LOW_CONFIDENCE",
+            "prediction": best["text"] if best else None,
+            "confidence_score": best["context_score"] if best else 0.0,
             "candidates": filtered,
             "is_speculative": True,
-            "disclaimer": "CRITICAL: This text is a context-derived linguistic suggestion. It must NEVER be treated as verified historical ink without independent manuscript confirmation.",
-            "left_context_used": left_context,
-            "right_context_used": right_context,
+            "uncertain_span_received": norm_span,
+            "disclaimer": (
+                "CRITICAL: This text is a context-derived linguistic suggestion estimated from corpus statistics. "
+                "Per academic integrity standards, it must NEVER be presented as authentic recovered original manuscript ink."
+            ),
+            "left_context_used": norm_left,
+            "right_context_used": norm_right,
         }
 
     def save(self, filepath: Path) -> None:
