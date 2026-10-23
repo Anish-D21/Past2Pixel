@@ -160,22 +160,72 @@ export const Dashboard: React.FC = () => {
                 <FileText className="w-4 h-4 text-emerald-700" />
                 <span>Tesseract OCR Engine</span>
               </span>
-              <StatusBadge status={ocr?.tesseract_available ? 'READY' : 'UNAVAILABLE'} size="sm" />
+              <StatusBadge
+                status={
+                  ocr?.status === 'READY' || ocr?.is_installed || ocr?.tesseract_available
+                    ? 'READY'
+                    : ocr?.status || 'UNAVAILABLE'
+                }
+                size="sm"
+              />
             </div>
             <div className="font-semibold text-base text-stone-900">
-              {ocr?.tesseract_available ? `Tesseract ${ocr.tesseract_version}` : 'Tesseract Not Detected'}
+              {ocr?.is_installed || ocr?.tesseract_available
+                ? `Tesseract ${ocr?.version || ocr?.tesseract_version || 'Active'}`
+                : 'Tesseract Not Detected'}
             </div>
             <p className="text-xs text-stone-500 mt-1">
-              {ocr?.has_devanagari_support
+              {ocr?.has_devanagari_support || ocr?.devanagari_support
                 ? 'Devanagari (san/hin) language packs loaded'
                 : 'Devanagari OCR requires Tesseract installation'}
             </p>
+
+            {/* Binary Executable Path */}
+            {ocr?.tesseract_cmd && (
+              <div
+                className="mt-2.5 px-2 py-1 bg-stone-50 rounded border border-stone-200/80 text-[11px] font-mono text-stone-600 truncate flex items-center gap-1.5"
+                title={ocr.tesseract_cmd}
+              >
+                <span className="text-stone-400 font-sans text-[10px] uppercase font-bold shrink-0">Path:</span>
+                <span className="truncate">{ocr.tesseract_cmd}</span>
+              </div>
+            )}
+
+            {/* Installed Language Pack Badges */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] text-stone-400 uppercase font-bold mr-0.5">Packs:</span>
+              {ocr?.available_languages && ocr.available_languages.length > 0 ? (
+                ocr.available_languages.map((lang) => {
+                  const isDeva = lang === 'san' || lang === 'hin';
+                  return (
+                    <span
+                      key={lang}
+                      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                        isDeva
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          : 'bg-stone-100 text-stone-700 border border-stone-200'
+                      }`}
+                    >
+                      {lang}
+                      {isDeva && <span className="ml-1 w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />}
+                    </span>
+                  );
+                })
+              ) : (
+                <span className="text-[11px] text-stone-400 italic">No language models detected</span>
+              )}
+            </div>
           </div>
-          <div className="mt-4 pt-3 border-t border-stone-100 flex items-center justify-between text-[11px] text-stone-500">
-            <span>Status:</span>
-            <span className={ocr?.tesseract_available ? 'text-emerald-700 font-medium' : 'text-stone-600'}>
-              {ocr?.tesseract_available ? 'Ready for Folio Ingestion' : 'Setup guidance provided'}
-            </span>
+
+          <div className="mt-4 pt-3 border-t border-stone-100 flex items-center justify-between text-[11px]">
+            <span className="text-stone-500">Subsystem:</span>
+            <Link
+              to="/ocr"
+              className="font-medium text-emerald-800 hover:text-emerald-700 flex items-center gap-1 transition"
+            >
+              <span>{ocr?.is_installed || ocr?.tesseract_available ? 'Launch Extraction' : 'Configure Engine'}</span>
+              <ExternalLink className="w-3 h-3" />
+            </Link>
           </div>
         </div>
       </div>

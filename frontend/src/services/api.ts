@@ -143,7 +143,9 @@ export const api = {
       sessionId: string,
       language: string = 'san+hin',
       targetImage: 'restored' | 'original' | 'baseline' | 'model' | 'compare_all' = 'restored',
-      preprocessing: string = 'none'
+      preprocessing: string = 'none',
+      mode: 'multi-pass' | 'single-pass' = 'multi-pass',
+      psm?: number
     ): Promise<OCRResult> =>
       request<OCRResult>('/ocr', {
         method: 'POST',
@@ -152,18 +154,26 @@ export const api = {
           language: language,
           target_image: targetImage,
           preprocessing: preprocessing,
+          mode: mode,
+          psm: psm,
         }),
       }),
 
     extractDirect: (
       file: File,
       language: string = 'san+hin',
-      preprocessing: string = 'none'
+      preprocessing: string = 'none',
+      mode: 'multi-pass' | 'single-pass' = 'multi-pass',
+      psm?: number
     ): Promise<OCRResult> => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('language', language);
       formData.append('preprocessing', preprocessing);
+      formData.append('mode', mode);
+      if (psm !== undefined) {
+        formData.append('psm', String(psm));
+      }
       return request<OCRResult>('/ocr/direct', {
         method: 'POST',
         body: formData,

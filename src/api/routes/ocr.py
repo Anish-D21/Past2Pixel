@@ -128,7 +128,15 @@ def run_ocr_on_session(
         )
 
     # Run OCR extraction
-    ocr_result = ocr_engine.extract_text(img_path, lang=req.language, preprocessing=preprocessing_mode)
+    mode_choice = getattr(req, "mode", "multi-pass") or "multi-pass"
+    psm_choice = getattr(req, "psm", None)
+    ocr_result = ocr_engine.extract_text(
+        img_path,
+        lang=req.language,
+        preprocessing=preprocessing_mode,
+        mode=mode_choice,
+        psm=psm_choice,
+    )
     ocr_result["session_id"] = clean_session_id
     ocr_result["image_source"] = image_source
     if comparison_results:
@@ -146,10 +154,17 @@ def run_ocr_on_session(
         language_used=ocr_result.get("language_used"),
         character_count=ocr_result["character_count"],
         word_count=ocr_result["word_count"],
+        lines_count=ocr_result.get("lines_count", 0),
         mean_confidence=ocr_result.get("mean_confidence"),
         is_authentic_ocr=ocr_result["is_authentic_ocr"],
+        is_multi_pass=ocr_result.get("is_multi_pass", False),
         image_source=image_source,
         preprocessing_applied=ocr_result.get("preprocessing_applied", "none"),
+        lines_detail=ocr_result.get("lines_detail"),
+        uncertain_lines_count=ocr_result.get("uncertain_lines_count", 0),
+        uncertain_lines=ocr_result.get("uncertain_lines"),
+        pass_summaries=ocr_result.get("pass_summaries"),
+        provenance_breakdown=ocr_result.get("provenance_breakdown"),
         comparison_results=comparison_results,
         error=ocr_result.get("error"),
         setup_instructions=ocr_result.get("setup_instructions"),
@@ -161,9 +176,12 @@ async def run_direct_ocr(
     file: UploadFile = File(..., description="Document image file for instant OCR extraction"),
     language: str = Form("san+hin", description="Tesseract language code"),
     preprocessing: str = Form("none", description="Preprocessing variant: 'none', 'auto', 'contrast', 'illumination', 'binarize', 'upscale'"),
+    mode: str = Form("multi-pass", description="Extraction mode: 'multi-pass' or 'single-pass'"),
+    psm: Optional[int] = Form(None, description="Optional PSM code for single-pass"),
 ):
     """
     Directly extracts machine-readable text from an uploaded image without requiring a session.
+    Supports Multi-Pass Reconciled extraction for maximum text recovery.
     """
     contents = await file.read()
     if len(contents) == 0:
@@ -174,7 +192,13 @@ async def run_direct_ocr(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid image file: {e}")
 
-    ocr_result = ocr_engine.extract_text(pil_img, lang=language, preprocessing=preprocessing)
+    ocr_result = ocr_engine.extract_text(
+        pil_img,
+        lang=language,
+        preprocessing=preprocessing,
+        mode=mode,
+        psm=psm,
+    )
 
     return OCRResponse(
         session_id=None,
@@ -185,10 +209,17 @@ async def run_direct_ocr(
         language_used=ocr_result.get("language_used"),
         character_count=ocr_result["character_count"],
         word_count=ocr_result["word_count"],
+        lines_count=ocr_result.get("lines_count", 0),
         mean_confidence=ocr_result.get("mean_confidence"),
         is_authentic_ocr=ocr_result["is_authentic_ocr"],
+        is_multi_pass=ocr_result.get("is_multi_pass", False),
         image_source="direct_upload",
         preprocessing_applied=ocr_result.get("preprocessing_applied", "none"),
+        lines_detail=ocr_result.get("lines_detail"),
+        uncertain_lines_count=ocr_result.get("uncertain_lines_count", 0),
+        uncertain_lines=ocr_result.get("uncertain_lines"),
+        pass_summaries=ocr_result.get("pass_summaries"),
+        provenance_breakdown=ocr_result.get("provenance_breakdown"),
         error=ocr_result.get("error"),
         setup_instructions=ocr_result.get("setup_instructions"),
     )

@@ -74,6 +74,8 @@ class OCRRequest(BaseModel):
     language: str = Field("san+hin", description="Language pack codes for Tesseract")
     target_image: Optional[str] = Field("restored", description="Target image: 'restored', 'original', 'baseline', 'model', or 'compare_all'")
     preprocessing: Optional[str] = Field("none", description="Controlled OCR preprocessing: 'none', 'auto', 'contrast', 'illumination', 'binarize', 'upscale'")
+    mode: Optional[str] = Field("multi-pass", description="Extraction mode: 'multi-pass' (maximum text recovery) or 'single-pass'")
+    psm: Optional[int] = Field(None, description="Optional explicit Page Segmentation Mode for single-pass")
 
 
 class OCRResponse(BaseModel):
@@ -85,10 +87,17 @@ class OCRResponse(BaseModel):
     language_used: Optional[str] = Field(None, description="Actual language pack used")
     character_count: int = Field(0, description="Total characters extracted")
     word_count: int = Field(0, description="Total words extracted")
+    lines_count: Optional[int] = Field(0, description="Total reconstructed line count")
     mean_confidence: Optional[float] = Field(None, description="Mean character confidence percentage")
     is_authentic_ocr: bool = Field(False, description="True if extracted from real engine, False if unavailable")
+    is_multi_pass: Optional[bool] = Field(False, description="True if extracted via multi-pass reconciliation")
     image_source: Optional[str] = Field(None, description="Image source used for OCR ('restored_unet.png', 'original.png', etc.)")
     preprocessing_applied: Optional[str] = Field("none", description="Image preprocessing mode applied")
+    lines_detail: Optional[List[Dict[str, Any]]] = Field(None, description="Detailed line breakdown with bounding boxes, confidence, and provenance")
+    uncertain_lines_count: Optional[int] = Field(0, description="Count of low-confidence or noise-flagged lines")
+    uncertain_lines: Optional[List[Dict[str, Any]]] = Field(None, description="List of uncertain lines for paleographic review")
+    pass_summaries: Optional[Dict[str, Any]] = Field(None, description="Per-pass statistics and processing times")
+    provenance_breakdown: Optional[Dict[str, int]] = Field(None, description="Lines contributed by each pass")
     comparison_results: Optional[Dict[str, Any]] = Field(None, description="Candidate-by-candidate OCR extraction comparison when compare_all is used")
     error: Optional[str] = Field(None, description="Error or reason if unavailable")
     setup_instructions: Optional[Dict[str, Any]] = Field(None, description="Setup instructions if OCR unavailable")

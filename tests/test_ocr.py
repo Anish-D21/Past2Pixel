@@ -218,3 +218,46 @@ def test_unicode_nfc_preservation():
     eval_res = engine.evaluate_ocr(nfd_text, nfc_text)
     assert eval_res["character_error_rate"] == 0.0
     assert eval_res["is_exact_match"] is True
+
+
+def test_multi_pass_ocr_recovery():
+    """Verify that multi-pass extraction returns lines_detail, pass_summaries, and is_multi_pass."""
+    img = Image.new("RGB", (300, 100), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.text((20, 20), "Line 1: Header Text", fill=(0, 0, 0))
+    draw.text((20, 60), "Line 2: Body Manuscript Text", fill=(0, 0, 0))
+
+    res = ocr_engine.extract_text(img, lang="eng", mode="multi-pass")
+    assert res["status"] == "SUCCESS"
+    assert res["is_multi_pass"] is True
+    assert "lines_detail" in res
+    assert "pass_summaries" in res
+    assert res["lines_count"] >= 1
+
+
+def test_multi_pass_duplicate_reconciliation():
+    """Verify that multi-pass line reconciliation eliminates duplicate overlapping lines."""
+    from src.ocr.ocr_multi_pass import multi_pass_ocr_engine
+    
+    pass_a = [
+        {"text": "Line One Reading A", "top": 50, "bottom": 80, "left": 10, "right": 200, "mean_conf": 80.0, "pass_name": "pass_a", "quality_score": 85.0},
+        {"text": "Line Two Unique A", "top": 100, "bottom": 130, "left": 10, "right": 200, "mean_conf": 82.0, "pass_name": "pass_a", "quality_score": 88.0},
+    ]
+    # Pass B detects the same line 1 (overlapping vertically at 52-82) plus a new line 3
+    pass_b = [
+        {"text": "Line One Reading B", "top": 52, "bottom": 82, "left": 10, "right": 200, "mean_conf": 92.0, "pass_name": "pass_b", "quality_score": 95.0},
+        {"text": "Line Three Recovered B", "top": 150, "bottom": 180, "left": 10, "right": 200, "mean_conf": 78.0, "pass_name": "pass_b", "quality_score": 80.0},
+    ]
+
+    reconciled_text, lines_detail, uncertain = multi_pass_ocr_engine.reconcile_passes([
+        ("pass_a", pass_a),
+        ("pass_b", pass_b),
+    ])
+
+    # Must have exactly 3 lines (Line 1 reconciled, Line 2 from A, Line 3 recovered from B)
+    assert len(lines_detail) == 3
+    # Line 1 should have taken higher-scoring pass B
+    assert lines_detail[0]["text"] == "Line One Reading B"
+    assert lines_detail[0]["pass_name"] == "pass_b"
+    assert lines_detail[1]["text"] == "Line Two Unique A"
+    assert lines_detail[2]["text"] == "Line Three Recovered B"

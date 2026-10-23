@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, List, Union
 import shutil
 import time
 import os
-from PIL import Image
+from PIL import Image, ImageOps
 import pytesseract
 from pytesseract import Output
 
@@ -16,6 +16,7 @@ import unicodedata
 from ..core.config import settings
 from ..prediction.context_predictor import calculate_cer, calculate_wer
 from .ocr_preprocessor import ocr_preprocessor
+from .ocr_multi_pass import multi_pass_ocr_engine
 
 
 class OCREngine:
@@ -153,15 +154,22 @@ class OCREngine:
         return {
             "status": status_code,
             "is_installed": self.is_installed,
+            "tesseract_available": self.is_installed,
             "tesseract_cmd": self.tesseract_cmd,
             "tessdata_dir": self.tessdata_dir,
             "version": self.version,
+            "tesseract_version": self.version,
             "available_languages": self.available_languages,
             "supported_configurations": self.get_supported_configurations(),
+            "has_devanagari_support": devanagari_ready,
             "devanagari_support": devanagari_ready,
+            "has_sanskrit": has_san,
+            "has_hindi": has_hin,
+            "has_english": has_eng,
             "has_sanskrit_pack": has_san,
             "has_hindi_pack": has_hin,
             "has_english_pack": has_eng,
+            "missing_languages": [lang for lang in ["san", "hin", "eng"] if lang not in self.available_languages],
             "reason": reason,
             "setup_instructions": None if status_code == "READY" else self.get_setup_instructions(),
         }
@@ -171,9 +179,13 @@ class OCREngine:
         image: Union[Image.Image, Path, str],
         lang: str = "san+hin",
         preprocessing: str = "none",
+        mode: str = "multi-pass",
+        psm: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Executes OCR extraction on a document image.
+        Supports both Multi-Pass Reconciled extraction (maximum text recovery with line alignment)
+        and targeted single-pass extraction.
         Captures execution time, preserves Unicode NFC characters, validates language packs strictly,
         and never silently substitutes English for Sanskrit.
         """
@@ -187,8 +199,10 @@ class OCREngine:
                 "language_used": None,
                 "character_count": 0,
                 "word_count": 0,
+                "lines_count": 0,
                 "mean_confidence": None,
                 "preprocessing_applied": preprocessing,
+                "is_multi_pass": False,
                 "is_authentic_ocr": False,
                 "error": "Tesseract OCR engine is not installed on this machine.",
                 "setup_instructions": status_info["setup_instructions"],
@@ -206,8 +220,10 @@ class OCREngine:
                     "language_used": None,
                     "character_count": 0,
                     "word_count": 0,
+                    "lines_count": 0,
                     "mean_confidence": None,
                     "preprocessing_applied": preprocessing,
+                    "is_multi_pass": False,
                     "error": f"Image file not found at {img_path}",
                     "is_authentic_ocr": False,
                 }
@@ -233,8 +249,10 @@ class OCREngine:
                 "language_used": None,
                 "character_count": 0,
                 "word_count": 0,
+                "lines_count": 0,
                 "mean_confidence": None,
                 "preprocessing_applied": preprocessing,
+                "is_multi_pass": False,
                 "is_authentic_ocr": False,
                 "error": (
                     f"Requested OCR language pack {missing_str} is not installed in Tesseract tessdata directory "
@@ -246,27 +264,80 @@ class OCREngine:
 
         effective_lang = "+".join(requested_tokens)
 
-        # Apply controlled OCR preprocessing without modifying the original image
-        processed_img, applied_mode = ocr_preprocessor.apply_mode(pil_img, mode=preprocessing)
+        # ------------------------------------------------------------------
+        # BRANCH A: Multi-Pass Maximum Text Recovery Mode
+        # ------------------------------------------------------------------
+        if mode == "multi-pass" and preprocessing in ["none", "auto"]:
+            res = multi_pass_ocr_engine.extract_reconciled(
+                pil_img,
+                lang=effective_lang,
+                enable_sparse_pass=True,
+            )
+            res["language_requested"] = lang
+            res["preprocessing_applied"] = "multi_pass_reconciled"
+            return res
 
-        # Run OCR with execution timing
+        # ------------------------------------------------------------------
+        # BRANCH B: Single-Pass Mode (with Border Padding & Configured PSM)
+        # ------------------------------------------------------------------
+        processed_img, applied_mode = ocr_preprocessor.apply_mode(pil_img, mode=preprocessing)
+        # Add 30px white border padding to protect characters near image boundaries
+        padded_img = ImageOps.expand(processed_img, border=30, fill="white")
+        config_str = f"--psm {psm}" if psm is not None else "--psm 6"
+
         start_t = time.perf_counter()
         try:
-            # 1. Standard text extraction with Unicode NFC normalization
-            extracted = pytesseract.image_to_string(processed_img, lang=effective_lang)
+            # 1. Text extraction with Unicode NFC normalization
+            extracted = pytesseract.image_to_string(padded_img, lang=effective_lang, config=config_str)
             clean_text = unicodedata.normalize("NFC", extracted).strip()
 
-            # 2. Extract word-level confidence
+            # 2. Extract word-level confidence and line structure
             mean_conf = None
+            lines_detail = []
             try:
-                data = pytesseract.image_to_data(processed_img, lang=effective_lang, output_type=Output.DICT)
-                confs = [float(c) for c in data.get("conf", []) if str(c).replace("-", "").isdigit() and float(c) >= 0]
+                data = pytesseract.image_to_data(
+                    padded_img,
+                    lang=effective_lang,
+                    config=config_str,
+                    output_type=Output.DICT,
+                )
+                confs = [
+                    float(c)
+                    for c in data.get("conf", [])
+                    if str(c).replace("-", "").isdigit() and float(c) >= 0
+                ]
                 if confs:
                     mean_conf = round(sum(confs) / len(confs), 2)
+
+                # Group into lines
+                lines_map = {}
+                for i in range(len(data.get("text", []))):
+                    w_txt = data["text"][i].strip()
+                    if w_txt:
+                        k = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+                        if k not in lines_map:
+                            lines_map[k] = {"words": [], "confs": []}
+                        lines_map[k]["words"].append(w_txt)
+                        c_val = float(data["conf"][i]) if str(data["conf"][i]).replace("-", "").isdigit() else 0.0
+                        if c_val >= 0:
+                            lines_map[k]["confs"].append(c_val)
+
+                for idx, (k, v) in enumerate(lines_map.items(), start=1):
+                    l_str = " ".join(v["words"]).strip()
+                    if l_str:
+                        m_c = round(sum(v["confs"]) / max(len(v["confs"]), 1), 1)
+                        lines_detail.append({
+                            "line_num": idx,
+                            "text": l_str,
+                            "mean_confidence": m_c,
+                            "pass_name": f"single_pass_{config_str.replace('--', '')}",
+                            "is_uncertain": m_c < 45.0,
+                        })
             except Exception:
                 pass
 
             elapsed_ms = round((time.perf_counter() - start_t) * 1000, 2)
+            lines_count = len([l for l in clean_text.splitlines() if l.strip()])
 
             return {
                 "status": "SUCCESS",
@@ -276,8 +347,12 @@ class OCREngine:
                 "language_used": effective_lang,
                 "character_count": len(clean_text),
                 "word_count": len(clean_text.split()),
+                "lines_count": lines_count,
+                "lines_detail": lines_detail,
+                "uncertain_lines_count": sum(1 for l in lines_detail if l.get("is_uncertain")),
                 "mean_confidence": mean_conf,
                 "preprocessing_applied": applied_mode,
+                "is_multi_pass": False,
                 "is_authentic_ocr": True,
                 "error": None,
             }
@@ -291,8 +366,10 @@ class OCREngine:
                 "language_used": effective_lang,
                 "character_count": 0,
                 "word_count": 0,
+                "lines_count": 0,
                 "mean_confidence": None,
                 "preprocessing_applied": applied_mode,
+                "is_multi_pass": False,
                 "is_authentic_ocr": False,
                 "error": f"Tesseract execution error: {str(e)}",
             }

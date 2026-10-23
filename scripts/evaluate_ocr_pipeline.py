@@ -134,8 +134,31 @@ def main():
     else:
         print("VQA OCR test directory not found.")
 
-    # 4. English Evaluation
-    print("\n--- 3. English Transliteration / Metadata OCR Evaluation ---")
+    # 4. Full-Page Manuscript Multi-Pass vs Single-Pass Benchmark
+    print("\n--- 3. Full-Page Manuscript Multi-Pass vs Single-Pass Benchmark ---")
+    sample_pages_dir = Path("data/raw/VedOCR/VedOCR_kaggle_release/sample_pages")
+    if sample_pages_dir.exists():
+        for page_name in ["00000002.png", "00000003.png"]:
+            page_path = sample_pages_dir / page_name
+            if not page_path.exists():
+                continue
+            page_img = Image.open(page_path).convert("RGB")
+            
+            # A. Single-Pass (Previous approach: default PSM 3, no multi-pass)
+            sp_res = ocr_engine.extract_text(page_img, lang="san", mode="single-pass", psm=3)
+            
+            # B. Multi-Pass Reconciled (Upgraded approach)
+            mp_res = ocr_engine.extract_text(page_img, lang="san", mode="multi-pass")
+            
+            print(f"\nPage: {page_name} ({page_img.width}x{page_img.height})")
+            print(f"  Single-Pass (PSM 3): Chars: {sp_res['character_count']} | Lines: {sp_res['lines_count']} | Time: {sp_res['processing_time_ms']}ms")
+            print(f"  Multi-Pass Reconciled: Chars: {mp_res['character_count']} | Lines: {mp_res['lines_count']} | Time: {mp_res['processing_time_ms']}ms")
+            print(f"  Net Text Recovery Gain: +{mp_res['character_count'] - sp_res['character_count']} chars, +{mp_res['lines_count'] - sp_res['lines_count']} lines")
+            print(f"  Provenance Breakdown: {mp_res.get('provenance_breakdown')}")
+            print(f"  Uncertain Lines Flagged: {mp_res.get('uncertain_lines_count')}")
+
+    # 5. English Evaluation
+    print("\n--- 4. English Transliteration / Metadata OCR Evaluation ---")
     eng_samples = [
         "Past2Pixel: Deep Learning Manuscript Restoration and Explainable AI",
         "Vedic Sanskrit Manuscript Folio Rigveda Hymn",
@@ -145,14 +168,14 @@ def main():
         draw = ImageDraw.Draw(img)
         draw.text((20, 20), text, fill=(0, 0, 0))
 
-        ocr_res = ocr_engine.extract_text(img, lang="eng", preprocessing="auto")
+        ocr_res = ocr_engine.extract_text(img, lang="eng", mode="single-pass", psm=6)
         eval_metrics = ocr_engine.evaluate_ocr(ocr_res["extracted_text"], text)
         print(f"English Sample {idx+1}:")
         print(f"  GT:   {text}")
         print(f"  Pred: {ocr_res['extracted_text'].strip()} (CER: {eval_metrics['character_error_rate']:.3f}, WER: {eval_metrics['word_error_rate']:.3f})")
 
-    # 5. Context-Aware Damaged Text Completion Trace
-    print("\n--- 4. Traced Context-Aware Damaged Text Completion ---")
+    # 6. Context-Aware Damaged Text Completion Trace
+    print("\n--- 5. Traced Context-Aware Damaged Text Completion ---")
     predictor = get_trained_predictor()
     print(f"Trained Predictor Vocab Size: {len(predictor.vocabulary)} words")
     print(f"N-Gram LM Order: {predictor.n}")

@@ -33,11 +33,21 @@ export interface ReadinessResponse {
   models: Record<string, ModelInfo>;
   ocr: {
     status: string;
+    is_installed?: boolean;
     tesseract_available: boolean;
     tesseract_version?: string;
+    version?: string;
+    tesseract_cmd?: string | null;
+    tessdata_dir?: string | null;
     available_languages: string[];
+    supported_configurations?: string[];
     has_devanagari_support: boolean;
-    missing_languages: string[];
+    devanagari_support?: boolean;
+    has_sanskrit_pack?: boolean;
+    has_hindi_pack?: boolean;
+    has_english_pack?: boolean;
+    missing_languages?: string[];
+    reason?: string;
   };
   database: {
     status: string;
@@ -140,6 +150,20 @@ export interface RestorationResponse {
   };
 }
 
+export interface OCRLineDetail {
+  line_num: number;
+  text: string;
+  mean_confidence?: number | null;
+  pass_name: string;
+  bbox?: [number, number, number, number] | null;
+  is_uncertain?: boolean;
+  alternate_readings?: Array<{
+    text: string;
+    pass_name: string;
+    mean_conf: number;
+  }>;
+}
+
 export interface OCRResult {
   session_id?: string | null;
   status: 'SUCCESS' | 'UNAVAILABLE' | 'FAILED' | 'IMAGE_NOT_FOUND' | 'NO_LANGUAGE_DATA' | 'MISSING_LANGUAGE_PACK';
@@ -149,10 +173,26 @@ export interface OCRResult {
   language_used?: string | null;
   character_count: number;
   word_count: number;
+  lines_count?: number;
   mean_confidence?: number | null;
   is_authentic_ocr: boolean;
+  is_multi_pass?: boolean;
   image_source?: string | null;
   preprocessing_applied?: string | null;
+  lines_detail?: OCRLineDetail[] | null;
+  uncertain_lines_count?: number;
+  uncertain_lines?: OCRLineDetail[] | null;
+  pass_summaries?: Record<
+    string,
+    {
+      name: string;
+      lines_count: number;
+      character_count: number;
+      mean_confidence?: number | null;
+      processing_time_ms: number;
+    }
+  > | null;
+  provenance_breakdown?: Record<string, number> | null;
   comparison_results?: Record<
     string,
     {
