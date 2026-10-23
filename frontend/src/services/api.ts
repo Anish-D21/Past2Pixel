@@ -209,5 +209,30 @@ export const api = {
       request<{ deleted: boolean; session_id: string }>(`/sessions/${sessionId}`, {
         method: 'DELETE',
       }),
+
+    getReportUrl: (sessionId: string, format: 'pdf' | 'html' | 'json' | 'markdown' = 'html'): string =>
+      `${API_BASE}/sessions/${sessionId}/report?format=${format}`,
+
+    downloadReport: async (
+      sessionId: string,
+      format: 'pdf' | 'html' | 'json' | 'markdown' = 'html'
+    ): Promise<void> => {
+      const url = `${API_BASE}/sessions/${sessionId}/report?format=${format}`;
+      const token = getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) throw new Error(`Report download failed with status ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const ext = format === 'markdown' ? 'md' : format;
+      a.download = `past2pixel_xai_report_${sessionId}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    },
   },
 };

@@ -276,6 +276,9 @@ export interface SessionDetailResponse {
     model_readiness: Record<string, string>;
     damage_detection: Record<string, any>;
     restoration: Record<string, any>;
+    device_info?: Record<string, any>;
+    candidate_selection?: Record<string, any>;
+    text_protection?: Record<string, any>;
   } | null;
   text_predictions: any[];
 }
