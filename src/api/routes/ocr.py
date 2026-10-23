@@ -17,6 +17,17 @@ from ..schemas import OCRResponse, OCRRequest
 router = APIRouter(prefix="/ocr", tags=["OCR & Text Extraction"])
 
 
+@router.get("", response_model=dict)
+@router.get("/status", response_model=dict)
+def get_ocr_status():
+    """
+    Returns deep diagnostic report of OCR engine availability,
+    executable path, version, and language capabilities.
+    Enables frontend to audit engine readiness prior to execution.
+    """
+    return ocr_engine.get_status(force_refresh=True)
+
+
 @router.post("", response_model=OCRResponse)
 def run_ocr_on_session(
     req: OCRRequest,
@@ -24,20 +35,23 @@ def run_ocr_on_session(
 ):
     """
     Executes OCR text extraction on the manuscript image of an existing session.
+    Prioritizes restored folio (restored_unet.png) over original degraded image when available,
+    maximizing character recognition quality.
     Honoring scientific integrity: if Tesseract is unavailable or missing language packs,
     reports the diagnostic status and setup instructions without fabricating text.
     """
-    if not req.session_id:
+    if not req.session_id or not req.session_id.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="session_id is required to run OCR on an existing session.",
+            detail="session_id is required to run OCR on an existing session. If you have an image file, use direct file upload.",
         )
 
-    session = db_manager.get_session(req.session_id)
+    clean_session_id = req.session_id.strip()
+    session = db_manager.get_session(clean_session_id)
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session '{req.session_id}' not found.",
+            detail=f"Session '{clean_session_id}' not found. Please provide a valid restored folio session ID or use direct file upload.",
         )
 
     # Ownership enforcement: private sessions can only be accessed by their owner
@@ -49,23 +63,43 @@ def run_ocr_on_session(
                 detail="Access denied: You do not have permission to access OCR for this session.",
             )
 
-    session_dir = settings.SESSIONS_STORAGE_DIR / req.session_id
-    img_path = session_dir / "original.png"
-    if not img_path.exists():
+    session_dir = settings.SESSIONS_STORAGE_DIR / clean_session_id
+    if not session_dir.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Original image for session '{req.session_id}' not found on server.",
+            detail=f"Session storage directory for '{clean_session_id}' not found on server.",
+        )
+
+    # Preferred image selection: restored image preferred if present, otherwise original
+    restored_path = session_dir / "restored_unet.png"
+    original_path = session_dir / "original.png"
+
+    target_choice = getattr(req, "target_image", "restored") or "restored"
+    if target_choice == "original" and original_path.exists():
+        img_path = original_path
+        image_source = "original.png"
+    elif restored_path.exists():
+        img_path = restored_path
+        image_source = "restored_unet.png"
+    elif original_path.exists():
+        img_path = original_path
+        image_source = "original.png"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Neither restored folio nor original image found on server for session '{clean_session_id}'.",
         )
 
     # Run OCR extraction
     ocr_result = ocr_engine.extract_text(img_path, lang=req.language)
-    ocr_result["session_id"] = req.session_id
+    ocr_result["session_id"] = clean_session_id
+    ocr_result["image_source"] = image_source
 
     # Update session in DB
-    db_manager.update_session(req.session_id, {"ocr_result": ocr_result, "status": "OCR_PROCESSED"})
+    db_manager.update_session(clean_session_id, {"ocr_result": ocr_result, "status": "OCR_PROCESSED"})
 
     return OCRResponse(
-        session_id=req.session_id,
+        session_id=clean_session_id,
         status=ocr_result["status"],
         extracted_text=ocr_result["extracted_text"],
         processing_time_ms=ocr_result["processing_time_ms"],
@@ -75,6 +109,7 @@ def run_ocr_on_session(
         word_count=ocr_result["word_count"],
         mean_confidence=ocr_result.get("mean_confidence"),
         is_authentic_ocr=ocr_result["is_authentic_ocr"],
+        image_source=image_source,
         error=ocr_result.get("error"),
         setup_instructions=ocr_result.get("setup_instructions"),
     )
@@ -110,6 +145,7 @@ async def run_direct_ocr(
         word_count=ocr_result["word_count"],
         mean_confidence=ocr_result.get("mean_confidence"),
         is_authentic_ocr=ocr_result["is_authentic_ocr"],
+        image_source="direct_upload",
         error=ocr_result.get("error"),
         setup_instructions=ocr_result.get("setup_instructions"),
     )

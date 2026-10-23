@@ -120,8 +120,8 @@ export interface RestorationResponse {
 }
 
 export interface OCRResult {
-  session_id?: string;
-  status: 'SUCCESS' | 'UNAVAILABLE' | 'FAILED';
+  session_id?: string | null;
+  status: 'SUCCESS' | 'UNAVAILABLE' | 'FAILED' | 'IMAGE_NOT_FOUND' | 'NO_LANGUAGE_DATA';
   extracted_text: string;
   processing_time_ms: number;
   language_requested: string;
@@ -130,7 +130,21 @@ export interface OCRResult {
   word_count: number;
   mean_confidence?: number | null;
   is_authentic_ocr: boolean;
+  image_source?: string | null;
   error?: string | null;
+  setup_instructions?: Record<string, any> | null;
+}
+
+export interface OCRStatusInfo {
+  status: 'READY' | 'LIMITED_LANGUAGES' | 'UNAVAILABLE';
+  is_installed: boolean;
+  tesseract_cmd: string | null;
+  version: string | null;
+  available_languages: string[];
+  devanagari_support: boolean;
+  has_sanskrit_pack: boolean;
+  has_hindi_pack: boolean;
+  reason: string;
   setup_instructions?: Record<string, any> | null;
 }
 

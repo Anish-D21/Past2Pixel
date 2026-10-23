@@ -162,7 +162,7 @@ def train_restoration(
             f"Val SSIM: {avg_ssim:.4f}"
         )
 
-        if avg_val_loss < best_val_loss or epoch == epochs:
+        if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             save_checkpoint(
                 model=model,

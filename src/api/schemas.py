@@ -72,6 +72,7 @@ class UploadResponse(BaseModel):
 class OCRRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Existing session ID to run OCR on")
     language: str = Field("san+hin+eng", description="Language pack codes for Tesseract")
+    target_image: Optional[str] = Field("restored", description="Target image: 'restored' (uses restored_unet.png if present) or 'original'")
 
 
 class OCRResponse(BaseModel):
@@ -85,6 +86,7 @@ class OCRResponse(BaseModel):
     word_count: int = Field(0, description="Total words extracted")
     mean_confidence: Optional[float] = Field(None, description="Mean character confidence percentage")
     is_authentic_ocr: bool = Field(False, description="True if extracted from real engine, False if unavailable")
+    image_source: Optional[str] = Field(None, description="Image source used for OCR ('restored_unet.png' or 'original.png')")
     error: Optional[str] = Field(None, description="Error or reason if unavailable")
     setup_instructions: Optional[Dict[str, Any]] = Field(None, description="Setup instructions if OCR unavailable")
 

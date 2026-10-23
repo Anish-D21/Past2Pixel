@@ -3,6 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { SessionDetailResponse, SessionSummary } from '../types/api';
 import { StatusBadge } from '../components/StatusBadge';
+import { ArtifactImage } from '../components/ArtifactImage';
 import {
   GitBranch,
   Layers,
@@ -188,11 +189,12 @@ export const PipelineExplanation: React.FC = () => {
                   </span>
                 </div>
                 <div className="h-32 bg-stone-900 rounded border border-stone-200 flex items-center justify-center overflow-hidden">
-                  {artifacts.damage_mask ? (
-                    <img src={artifacts.damage_mask} alt="Damage Mask" className="h-full object-contain" />
-                  ) : (
-                    <span className="text-xs text-stone-400">Unavailable</span>
-                  )}
+                  <ArtifactImage
+                    src={artifacts.damage_mask}
+                    alt="Damage Mask"
+                    className="h-32 w-full object-contain"
+                    fallbackLabel="Damage Mask Unavailable"
+                  />
                 </div>
                 <p className="text-[11px] text-stone-500">
                   U-Net segmentation with sigmoid activation & BCE/Dice weighting.
@@ -206,11 +208,12 @@ export const PipelineExplanation: React.FC = () => {
                   <StatusBadge status={restoration?.model_readiness || 'READY'} size="sm" />
                 </div>
                 <div className="h-32 bg-white rounded border border-emerald-200 flex items-center justify-center overflow-hidden">
-                  {artifacts.restored ? (
-                    <img src={artifacts.restored} alt="Restored" className="h-full object-contain" />
-                  ) : (
-                    <span className="text-xs text-stone-400">Pending</span>
-                  )}
+                  <ArtifactImage
+                    src={artifacts.restored}
+                    alt="Restored"
+                    className="h-32 w-full object-contain"
+                    fallbackLabel="Restored Folio Unavailable"
+                  />
                 </div>
                 <p className="text-[11px] text-stone-600">
                   Full encoder-decoder with skip connections + adaptive CLAHE contrast.

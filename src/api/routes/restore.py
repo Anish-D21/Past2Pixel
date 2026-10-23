@@ -61,10 +61,10 @@ def run_restoration_pipeline(
     engine = get_restoration_engine(req.device_preference)
 
     try:
-        # Pass session_dir's parent so process_image outputs into session_dir
         report = engine.process_image(
             input_image=img_path,
-            output_dir=settings.SESSIONS_STORAGE_DIR,
+            output_dir=session_dir,
+            session_id=req.session_id,
         )
     except Exception as e:
         raise HTTPException(

@@ -95,6 +95,7 @@ def evaluate_restoration_pair(
             "reason": "Authentic uploaded manuscript has no ground-truth clean reference image. PSNR and SSIM require an uncorrupted target.",
             "psnr": None,
             "ssim": None,
+            "reference_available": False,
         }
 
     # Normalize reconstructed to numpy array [0.0, 1.0]
@@ -108,6 +109,7 @@ def evaluate_restoration_pair(
             "reason": f"Dimension mismatch: reconstructed is {rec_np.shape}, reference is {ref_np.shape}.",
             "psnr": None,
             "ssim": None,
+            "reference_available": False,
         }
 
     psnr_val = calculate_psnr(rec_np, ref_np, data_range=1.0)
@@ -118,6 +120,7 @@ def evaluate_restoration_pair(
         "psnr_db": round(psnr_val, 3) if psnr_val != float("inf") else 999.0,
         "ssim": round(ssim_val, 4),
         "data_range": 1.0,
+        "reference_available": True,
         "interpretation": {
             "psnr": "Higher is better (>25 dB indicates good visual fidelity, >30 dB indicates high quality)",
             "ssim": "Structural similarity index in range [-1, 1], where 1.0 indicates identical structure.",

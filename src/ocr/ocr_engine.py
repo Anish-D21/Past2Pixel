@@ -27,6 +27,7 @@ class OCREngine:
         Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
         Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
         Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe")),
+        Path(os.path.expandvars(r"%USERPROFILE%\AppData\Local\Programs\Tesseract-OCR\tesseract.exe")),
     ]
 
     def __init__(self, tesseract_cmd: Optional[str] = None):
@@ -39,21 +40,39 @@ class OCREngine:
 
     def _detect_installation(self) -> None:
         """Locates tesseract executable on Windows or system PATH and audits language models."""
-        # 1. Configured path from settings or arguments
-        if self.configured_cmd and Path(self.configured_cmd).exists():
-            self.tesseract_cmd = str(Path(self.configured_cmd).resolve())
-        # 2. Check system PATH
-        elif shutil.which("tesseract"):
-            self.tesseract_cmd = shutil.which("tesseract")
-        # 3. Check standard Windows installations
-        else:
-            for p in self.WINDOWS_DEFAULT_PATHS:
-                if p.exists():
-                    self.tesseract_cmd = str(p)
-                    break
+        candidate: Optional[str] = None
 
-        if self.tesseract_cmd:
-            pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
+        # 1. Configured path from constructor, settings, or runtime environment
+        configured = (self.configured_cmd or settings.TESSERACT_CMD or os.getenv("TESSERACT_CMD", "")).strip().strip("'\"")
+        if configured:
+            p = Path(configured)
+            if p.is_file():
+                candidate = str(p.resolve())
+            elif p.is_dir() and (p / "tesseract.exe").is_file():
+                candidate = str((p / "tesseract.exe").resolve())
+            else:
+                candidate = None  # Explicitly configured path does not exist
+        else:
+            # 2. Check system PATH
+            which_tess = shutil.which("tesseract")
+            if which_tess:
+                candidate = which_tess
+            else:
+                # 3. Check standard Windows installations
+                for p in self.WINDOWS_DEFAULT_PATHS:
+                    if p.is_file():
+                        candidate = str(p.resolve())
+                        break
+
+        if candidate:
+            self.tesseract_cmd = candidate
+            pytesseract.pytesseract.tesseract_cmd = candidate
+            
+            # Configure TESSDATA_PREFIX if adjacent tessdata directory exists
+            tessdata_dir = Path(candidate).parent / "tessdata"
+            if tessdata_dir.is_dir() and "TESSDATA_PREFIX" not in os.environ:
+                os.environ["TESSDATA_PREFIX"] = str(tessdata_dir)
+
             try:
                 ver = pytesseract.get_tesseract_version()
                 self.version = str(ver)
@@ -62,7 +81,10 @@ class OCREngine:
             except Exception:
                 self.is_installed = False
         else:
+            self.tesseract_cmd = None
             self.is_installed = False
+            self.version = None
+            self.available_languages = []
 
     def get_setup_instructions(self) -> Dict[str, Any]:
         """Provides exact Windows setup instructions for Tesseract and Devanagari/Sanskrit packs."""
@@ -75,14 +97,17 @@ class OCREngine:
                 "   - Expand 'Additional language data (download)' and check 'Sanskrit' (san) and 'Hindi' (hin)",
                 "3. Finish installation to the default path: 'C:\\Program Files\\Tesseract-OCR\\'",
                 "4. Add 'C:\\Program Files\\Tesseract-OCR\\' to your Windows System PATH, or set 'TESSERACT_CMD=C:\\Program Files\\Tesseract-OCR\\tesseract.exe' in your .env file.",
-                "5. Restart the backend service to auto-detect the newly installed OCR engine.",
+                "5. The server auto-detects newly installed engines and language packs immediately.",
             ],
             "required_language_packs": ["san (Vedic/Classical Sanskrit)", "hin (Hindi)", "script/Devanagari"],
             "download_url": "https://github.com/UB-Mannheim/tesseract/wiki",
         }
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Returns deep diagnostic report of OCR engine availability and language capabilities."""
+        if force_refresh or not self.is_installed:
+            self._detect_installation()
+
         has_san = "san" in self.available_languages
         has_hin = "hin" in self.available_languages
         has_deva = any("deva" in lang.lower() for lang in self.available_languages)

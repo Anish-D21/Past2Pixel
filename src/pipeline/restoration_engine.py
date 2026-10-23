@@ -79,12 +79,13 @@ class RestorationEngine:
         reference_clean_image: Optional[Union[Path, str, Image.Image]] = None,
         reference_damage_mask: Optional[Union[Path, str, np.ndarray]] = None,
         output_dir: Optional[Path] = None,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Executes complete restoration & damage detection pipeline on a single image.
         Captures genuine timing, hardware specs, intermediate visual arrays, and metrics.
         """
-        session_id = f"p2p_{uuid.uuid4().hex[:12]}_{int(time.time())}"
+        session_id = session_id or f"p2p_{uuid.uuid4().hex[:12]}_{int(time.time())}"
         overall_timer = Timer("overall_pipeline")
 
         with overall_timer:
@@ -179,7 +180,11 @@ class RestorationEngine:
             # 7. Save Session Artifacts if output directory provided
             saved_paths = {}
             if output_dir:
-                out_p = Path(output_dir) / session_id
+                out_base = Path(output_dir)
+                if out_base.name == session_id:
+                    out_p = out_base
+                else:
+                    out_p = out_base / session_id
                 out_p.mkdir(parents=True, exist_ok=True)
                 orig_path = out_p / "original.png"
                 restored_path = out_p / "restored_unet.png"

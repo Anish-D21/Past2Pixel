@@ -50,7 +50,7 @@ def generate_session_markdown_report(session: Dict[str, Any]) -> str:
         "## 2. Deep Learning Pipeline & Model Readiness",
         "| Subsystem Module | Architecture | Checkpoint State | Academic Scientific Status |",
         "|---|---|---|---|",
-        f"| Damage Localization | U-Net (Binary Segmentation) | `{readiness.get('unet_damage_detector', 'UNKNOWN')}` | {'Trained Weights' if readiness.get('unet_damage_detector') == 'READY_FOR_INFERENCE' else 'Untrained Initial Weights (Diagnostic)'} |",
+        f"| Damage Localization | U-Net (Binary Segmentation) | `{readiness.get('damage_detector') or readiness.get('unet_damage_detector', 'UNKNOWN')}` | {'Trained Weights' if (readiness.get('damage_detector') or readiness.get('unet_damage_detector')) == 'READY_FOR_INFERENCE' else 'Untrained Initial Weights (Diagnostic)'} |",
         f"| Image Restoration | U-Net (Residual Skip Connections) | `{readiness.get('unet_restoration', 'UNKNOWN')}` | {'Trained Weights' if readiness.get('unet_restoration') == 'READY_FOR_INFERENCE' else 'Untrained Initial Weights (Diagnostic)'} |",
         f"| Baseline Comparison | Convolutional Autoencoder | `{readiness.get('autoencoder_baseline', 'UNKNOWN')}` | {'Trained Weights' if readiness.get('autoencoder_baseline') == 'READY_FOR_INFERENCE' else 'Untrained Initial Weights (Diagnostic)'} |",
         "",
@@ -64,8 +64,8 @@ def generate_session_markdown_report(session: Dict[str, Any]) -> str:
     ]
 
     # Damage metrics
-    damage_metrics = damage.get("metrics", {})
-    if damage_metrics.get("metrics_available"):
+    damage_metrics = damage.get("evaluation") or damage.get("metrics", {})
+    if damage_metrics.get("metrics_available") or damage_metrics.get("status") == "CALCULATED":
         report_lines.append(f"- **Intersection-over-Union (IoU):** `{damage_metrics.get('iou', 0):.4f}`")
         report_lines.append(f"- **Dice Similarity Coefficient:** `{damage_metrics.get('dice', 0):.4f}`")
     else:
@@ -78,8 +78,8 @@ def generate_session_markdown_report(session: Dict[str, Any]) -> str:
         "## 4. Image Restoration Evaluation (PSNR / SSIM)",
     ])
 
-    unet_metrics = restoration.get("unet_metrics", {})
-    if unet_metrics.get("reference_available"):
+    unet_metrics = restoration.get("unet_restoration_metrics") or restoration.get("unet_metrics", {})
+    if unet_metrics.get("reference_available") and unet_metrics.get("status") == "CALCULATED":
         report_lines.append(f"- **U-Net PSNR:** `{unet_metrics.get('psnr_db', 0):.2f} dB`")
         report_lines.append(f"- **U-Net SSIM:** `{unet_metrics.get('ssim', 0):.4f}`")
     else:

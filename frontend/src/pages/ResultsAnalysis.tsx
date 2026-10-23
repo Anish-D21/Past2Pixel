@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { SessionDetailResponse } from '../types/api';
 import { StatusBadge } from '../components/StatusBadge';
 import { ImageComparisonSlider } from '../components/ImageComparisonSlider';
+import { ArtifactImage } from '../components/ArtifactImage';
 import {
   Sparkles,
   Cpu,
@@ -215,34 +216,35 @@ export const ResultsAnalysis: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
             <div className="text-xs font-medium text-stone-700">1. Original Upload</div>
-            <img
+            <ArtifactImage
               src={artifacts.original}
               alt="Original"
-              className="h-44 w-full object-contain rounded bg-stone-50 border border-stone-100"
+              fallbackLabel="Original Folio Unavailable"
             />
           </div>
           <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
             <div className="text-xs font-medium text-stone-700">2. Damage Binary Mask</div>
-            <img
-              src={artifacts.damage_mask || ''}
+            <ArtifactImage
+              src={artifacts.damage_mask}
               alt="Damage Mask"
               className="h-44 w-full object-contain rounded bg-stone-900 border border-stone-100"
+              fallbackLabel="Damage Mask Unavailable"
             />
           </div>
           <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
             <div className="text-xs font-medium text-stone-700">3. Damage Heatmap Overlay</div>
-            <img
-              src={artifacts.damage_overlay || ''}
+            <ArtifactImage
+              src={artifacts.damage_overlay}
               alt="Damage Overlay"
-              className="h-44 w-full object-contain rounded bg-stone-50 border border-stone-100"
+              fallbackLabel="Heatmap Overlay Unavailable"
             />
           </div>
           <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
             <div className="text-xs font-medium text-stone-700">4. Final Restored Folio</div>
-            <img
-              src={artifacts.restored || ''}
+            <ArtifactImage
+              src={artifacts.restored}
               alt="Restored"
-              className="h-44 w-full object-contain rounded bg-stone-50 border border-stone-100"
+              fallbackLabel="Restored Folio Unavailable"
             />
           </div>
         </div>

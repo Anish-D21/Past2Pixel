@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { RestorationResponse, UploadResponse } from '../types/api';
 import { ImageComparisonSlider } from '../components/ImageComparisonSlider';
 import { StatusBadge } from '../components/StatusBadge';
+import { ArtifactImage } from '../components/ArtifactImage';
 import {
   Upload,
   Wand2,
@@ -283,10 +284,10 @@ export const RestoreManuscript: React.FC = () => {
             {/* 1. Original */}
             <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
               <div className="text-xs font-semibold text-stone-700">1. Original Input</div>
-              <img
+              <ArtifactImage
                 src={result.artifacts.original}
                 alt="Original"
-                className="h-44 w-full object-contain rounded bg-stone-50 border border-stone-100"
+                fallbackLabel="Original Folio Unavailable"
               />
             </div>
 
@@ -298,20 +299,21 @@ export const RestoreManuscript: React.FC = () => {
                   {result.damage_detection?.damaged_pixel_percentage?.toFixed(1)}%
                 </span>
               </div>
-              <img
-                src={result.artifacts.damage_mask || ''}
+              <ArtifactImage
+                src={result.artifacts.damage_mask}
                 alt="Damage Mask"
                 className="h-44 w-full object-contain rounded bg-stone-900 border border-stone-100"
+                fallbackLabel="Damage Mask Unavailable"
               />
             </div>
 
             {/* 3. Damage Overlay */}
             <div className="bg-white p-3 rounded-xl border border-stone-200 space-y-2">
               <div className="text-xs font-semibold text-stone-700">3. Damage Heatmap Overlay</div>
-              <img
-                src={result.artifacts.damage_overlay || ''}
+              <ArtifactImage
+                src={result.artifacts.damage_overlay}
                 alt="Damage Overlay"
-                className="h-44 w-full object-contain rounded bg-stone-50 border border-stone-100"
+                fallbackLabel="Heatmap Overlay Unavailable"
               />
             </div>
 
@@ -321,10 +323,10 @@ export const RestoreManuscript: React.FC = () => {
                 <span>4. Restored Folio</span>
                 <StatusBadge status={result.restoration?.model_readiness || 'READY'} size="sm" />
               </div>
-              <img
-                src={result.artifacts.restored || ''}
+              <ArtifactImage
+                src={result.artifacts.restored}
                 alt="Restored"
-                className="h-44 w-full object-contain rounded bg-stone-50 border border-stone-100"
+                fallbackLabel="Restored Folio Unavailable"
               />
             </div>
           </div>

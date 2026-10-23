@@ -2,6 +2,7 @@ import {
   AuthResponse,
   DamageAnalysisResult,
   OCRResult,
+  OCRStatusInfo,
   RestorationResponse,
   RestorationSession,
   SessionDetailResponse,
@@ -135,14 +136,31 @@ export const api = {
 
   // Optical Character Recognition (OCR)
   ocr: {
-    extractText: (sessionId: string, language: string = 'san+hin'): Promise<OCRResult> =>
+    getStatus: (): Promise<OCRStatusInfo> => request<OCRStatusInfo>('/ocr/status'),
+
+    extractText: (
+      sessionId: string,
+      language: string = 'san+hin',
+      targetImage: 'restored' | 'original' = 'restored'
+    ): Promise<OCRResult> =>
       request<OCRResult>('/ocr', {
         method: 'POST',
         body: JSON.stringify({
           session_id: sessionId,
           language: language,
+          target_image: targetImage,
         }),
       }),
+
+    extractDirect: (file: File, language: string = 'san+hin'): Promise<OCRResult> => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('language', language);
+      return request<OCRResult>('/ocr/direct', {
+        method: 'POST',
+        body: formData,
+      });
+    },
   },
 
   // Context-Aware Linguistic Text Prediction
