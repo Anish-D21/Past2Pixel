@@ -9,6 +9,21 @@
       name="description"
       content="Third-year AIML deep learning manuscript restoration, damage localization, and Vedic Sanskrit text preservation laboratory application."
     />
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('past2pixel_theme');
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (saved === 'dark' || (!saved && prefersDark)) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.setAttribute('data-theme', 'dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

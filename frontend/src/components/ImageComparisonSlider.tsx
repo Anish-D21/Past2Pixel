@@ -43,7 +43,7 @@ export const ImageComparisonSlider: React.FC<ImageComparisonSliderProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`relative select-none overflow-hidden rounded-lg border border-stone-200 bg-stone-100 shadow-md ${className}`}
+      className={`relative select-none overflow-hidden rounded-lg border border-stone-200 dark:border-[#27362E] bg-stone-100 dark:bg-[#141A17] shadow-md ${className}`}
       onMouseDown={() => setIsDragging(true)}
       onMouseUp={() => setIsDragging(false)}
       onMouseLeave={() => setIsDragging(false)}

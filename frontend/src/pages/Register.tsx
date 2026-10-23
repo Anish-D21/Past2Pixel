@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Scroll, Lock, Mail, User, AlertCircle, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
+import { Scroll, Lock, Mail, User, AlertCircle, ArrowRight, CheckCircle2, Sun, Moon } from 'lucide-react';
 
 export const Register: React.FC = () => {
   const { register } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
@@ -45,7 +47,28 @@ export const Register: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-archival-paper py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen flex items-center justify-center bg-archival-paper py-12 px-4 sm:px-6 lg:px-8 relative">
+      <div className="absolute top-6 right-6">
+        <button
+          onClick={toggleTheme}
+          type="button"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 dark:bg-[#18221D] dark:hover:bg-[#1E2B25] text-stone-700 dark:text-stone-300 border border-stone-300 dark:border-[#27362E] transition shadow-xs cursor-pointer text-xs font-medium"
+          aria-label={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+        >
+          {isDark ? (
+            <>
+              <Sun className="w-4 h-4 text-amber-400" />
+              <span>Light</span>
+            </>
+          ) : (
+            <>
+              <Moon className="w-4 h-4 text-emerald-700" />
+              <span>Dark</span>
+            </>
+          )}
+        </button>
+      </div>
       <div className="max-w-md w-full space-y-6 bg-white p-8 rounded-xl border border-stone-300 shadow-xl">
         <div className="text-center">
           <div className="mx-auto w-12 h-12 rounded-xl bg-emerald-800 flex items-center justify-center text-emerald-200 border border-emerald-600 shadow-md">

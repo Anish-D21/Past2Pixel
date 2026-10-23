@@ -57,11 +57,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ className = '' }) => {
 
   return (
     <aside
-      className={`w-64 bg-stone-900 border-r border-stone-800 flex flex-col shrink-0 text-stone-300 ${className}`}
+      className={`w-64 bg-stone-900 dark:bg-[#141A17] border-r border-stone-800 dark:border-[#27362E] flex flex-col shrink-0 text-stone-300 transition-colors duration-200 ${className}`}
     >
       {/* Section Header */}
-      <div className="p-4 border-b border-stone-800">
-        <div className="flex items-center gap-2 text-xs font-semibold text-stone-400 uppercase tracking-wider">
+      <div className="p-4 border-b border-stone-800 dark:border-[#27362E]">
+        <div className="flex items-center gap-2 text-xs font-semibold text-stone-400 dark:text-stone-400 uppercase tracking-wider">
           <Layers className="w-3.5 h-3.5 text-emerald-400" />
           <span>Research Modules</span>
         </div>
@@ -78,8 +78,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ className = '' }) => {
               className={({ isActive }) =>
                 `flex items-start gap-3 px-3 py-2.5 rounded-lg text-sm transition group ${
                   isActive
-                    ? 'bg-emerald-900/60 text-emerald-200 border border-emerald-700/50 shadow-xs'
-                    : 'text-stone-400 hover:bg-stone-800/80 hover:text-stone-200'
+                    ? 'bg-emerald-900/60 dark:bg-emerald-950/80 text-emerald-200 border border-emerald-700/50 dark:border-emerald-600/50 shadow-xs'
+                    : 'text-stone-400 hover:bg-stone-800/80 dark:hover:bg-[#1E2B25] hover:text-stone-200'
                 }`
               }
             >
@@ -96,7 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ className = '' }) => {
       </nav>
 
       {/* Footer Info */}
-      <div className="p-4 border-t border-stone-800 text-[11px] text-stone-500 space-y-1">
+      <div className="p-4 border-t border-stone-800 dark:border-[#27362E] text-[11px] text-stone-500 space-y-1">
         <div className="flex items-center justify-between">
           <span>Architecture:</span>
           <span className="font-mono text-stone-400">U-Net + CNN</span>
