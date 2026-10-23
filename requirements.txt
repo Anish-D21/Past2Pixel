@@ -34,3 +34,8 @@ pytesseract>=0.3.10
 pyjwt>=2.8.0
 bcrypt>=4.1.0
 
+# Phase 3: Streamlit Frontend & Visual Analysis
+streamlit>=1.30.0
+requests>=2.31.0
+
+

@@ -71,6 +71,22 @@ class ManuscriptPairDataset(Dataset):
         }
 
 
+def collate_manuscript_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Custom collate function for ManuscriptPairDataset to properly stack image/mask tensors
+    while gracefully preserving variable-length metadata dictionaries and strings.
+    """
+    return {
+        "degraded": torch.stack([b["degraded"] for b in batch]),
+        "clean": torch.stack([b["clean"] for b in batch]),
+        "damage_mask": torch.stack([b["damage_mask"] for b in batch]),
+        "filename": [b["filename"] for b in batch],
+        "document_id": [b["document_id"] for b in batch],
+        "source_dataset": [b.get("source_dataset", "unknown") for b in batch],
+        "metadata": [b["metadata"] for b in batch],
+    }
+
+
 def generate_synthetic_manuscript_sample(
     output_path: Path,
     width: int = 512,

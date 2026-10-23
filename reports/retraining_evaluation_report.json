@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-10-23T13:50:41Z",
+  "evaluation_device": "cuda",
+  "test_dataset_summary": {
+    "total_test_samples": 283,
+    "vedoocr_samples": 83,
+    "sanskrit_hindi_samples": 200,
+    "zero_leakage_guaranteed": true
+  },
+  "models": {
+    "autoencoder_baseline": {
+      "checkpoint": "checkpoints\\autoencoder_baseline_best.pt",
+      "test_psnr_mean": 25.36,
+      "test_psnr_std": 6.22,
+      "test_ssim_mean": 0.9086,
+      "test_ssim_std": 0.0374
+    },
+    "unet_restoration": {
+      "checkpoint": "checkpoints\\unet_restoration_best.pt",
+      "test_psnr_mean": 27.7,
+      "test_psnr_std": 5.65,
+      "test_ssim_mean": 0.9427,
+      "test_ssim_std": 0.0354,
+      "psnr_gain_over_baseline_db": 2.34,
+      "ssim_gain_over_baseline": 0.0341
+    },
+    "unet_damage_detector": {
+      "checkpoint": "checkpoints\\damage_detector_best.pt",
+      "test_iou_mean": 0.7097,
+      "test_iou_std": 0.1388,
+      "test_dice_mean": 0.8199,
+      "test_dice_std": 0.1293
+    },
+    "context_text_predictor": {
+      "checkpoint": "checkpoints\\context_predictor.json",
+      "is_fitted": true,
+      "vocabulary_size": 3405,
+      "total_words": 13145,
+      "test_evaluated_spans": 82,
+      "mean_cer_on_test_spans": 0.8336,
+      "top1_exact_word_accuracy": 0.1341
+    },
+    "tesseract_ocr": {
+      "status": "UNAVAILABLE",
+      "is_installed": false,
+      "reason": "Tesseract executable was not detected on Windows system PATH or standard directories."
+    }
+  },
+  "evaluation_time_seconds": 8.42
+}

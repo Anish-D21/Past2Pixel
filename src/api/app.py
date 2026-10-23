@@ -68,13 +68,28 @@ def create_app() -> FastAPI:
 
     # 3. Include Routers
     api_prefix = "/api"
-    app.include_router(health_router, prefix=api_prefix)
+    app.include_router(health_router)  # /health and /readiness
+    app.include_router(health_router, prefix=api_prefix)  # /api/health and /api/readiness
     app.include_router(auth_router, prefix=api_prefix)
     app.include_router(upload_router, prefix=api_prefix)
     app.include_router(ocr_router, prefix=api_prefix)
     app.include_router(restore_router, prefix=api_prefix)
     app.include_router(predict_router, prefix=api_prefix)
     app.include_router(sessions_router, prefix=api_prefix)
+
+    @app.get("/", tags=["Root"])
+    def root():
+        """Root welcome endpoint providing service status and quick links."""
+        return {
+            "service": "Past2Pixel — Ancient Manuscript AI API",
+            "status": "ONLINE",
+            "version": "1.0.0",
+            "docs_url": "/docs",
+            "redoc_url": "/redoc",
+            "health_url": "/health",
+            "readiness_url": "/readiness",
+            "frontend_instructions": "To launch the user interface, run 'cd frontend && npm run dev' and navigate to http://localhost:5173",
+        }
 
     # 4. Exception Handlers (Security: Do not leak internal stack traces)
     @app.exception_handler(StarletteHTTPException)

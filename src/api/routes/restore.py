@@ -3,10 +3,10 @@ Restoration & Damage Detection Endpoints for Past2Pixel API.
 Executes the deep learning pipeline (U-Net Restoration, Damage Detection, Baseline Autoencoder).
 """
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, status
-
+from fastapi import APIRouter, HTTPException, status, Depends
 from ...core.config import settings
 from ...pipeline.restoration_engine import RestorationEngine
+from ...auth.dependencies import get_optional_user
 from ...db.mongodb import db_manager
 from ..schemas import RestorationRequest, RestorationResponse
 
@@ -24,7 +24,10 @@ def get_restoration_engine(device_pref: str = "auto") -> RestorationEngine:
 
 
 @router.post("", response_model=RestorationResponse)
-def run_restoration_pipeline(req: RestorationRequest):
+def run_restoration_pipeline(
+    req: RestorationRequest,
+    current_user: dict = Depends(get_optional_user),
+):
     """
     Executes damage localization and restoration on the session's manuscript image.
     Generates pixel-level damage masks, visual heatmaps, and enhanced restored folios.
@@ -36,6 +39,15 @@ def run_restoration_pipeline(req: RestorationRequest):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{req.session_id}' not found.",
         )
+
+    # Ownership enforcement: private sessions can only be restored by their owner
+    owner_id = session.get("user_id")
+    if owner_id and owner_id != "anonymous":
+        if not current_user or str(current_user["_id"]) != owner_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You do not have permission to restore this session.",
+            )
 
     session_dir = settings.SESSIONS_STORAGE_DIR / req.session_id
     img_path = session_dir / "original.png"

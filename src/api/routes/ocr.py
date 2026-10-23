@@ -10,6 +10,7 @@ import io
 
 from ...core.config import settings
 from ...ocr.ocr_engine import ocr_engine
+from ...auth.dependencies import get_optional_user
 from ...db.mongodb import db_manager
 from ..schemas import OCRResponse, OCRRequest
 
@@ -17,7 +18,10 @@ router = APIRouter(prefix="/ocr", tags=["OCR & Text Extraction"])
 
 
 @router.post("", response_model=OCRResponse)
-def run_ocr_on_session(req: OCRRequest):
+def run_ocr_on_session(
+    req: OCRRequest,
+    current_user: dict = Depends(get_optional_user),
+):
     """
     Executes OCR text extraction on the manuscript image of an existing session.
     Honoring scientific integrity: if Tesseract is unavailable or missing language packs,
@@ -35,6 +39,15 @@ def run_ocr_on_session(req: OCRRequest):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{req.session_id}' not found.",
         )
+
+    # Ownership enforcement: private sessions can only be accessed by their owner
+    owner_id = session.get("user_id")
+    if owner_id and owner_id != "anonymous":
+        if not current_user or str(current_user["_id"]) != owner_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You do not have permission to access OCR for this session.",
+            )
 
     session_dir = settings.SESSIONS_STORAGE_DIR / req.session_id
     img_path = session_dir / "original.png"

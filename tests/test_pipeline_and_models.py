@@ -11,12 +11,14 @@ from src.models.model_registry import model_registry
 client = TestClient(app)
 
 
-def test_model_readiness_untrained_status():
-    """Verifies that uninitialized checkpoints are reported as UNTRAINED, never fabricated as trained."""
+def test_model_readiness_status():
+    """Verifies that model registry honestly reports readiness: READY_FOR_INFERENCE when checkpoints exist, UNTRAINED when absent."""
     statuses = model_registry.get_all_statuses()
     for model_name, info in statuses.items():
-        assert info["checkpoint_exists"] is False
-        assert "UNTRAINED" in str(info["status"])
+        if info["checkpoint_exists"]:
+            assert info["status"] == "READY_FOR_INFERENCE"
+        else:
+            assert info["status"] in ["UNTRAINED", "ARCHITECTURE_DEFINED"]
 
 
 def test_restoration_execution_and_artifacts():
@@ -47,8 +49,8 @@ def test_restoration_execution_and_artifacts():
     assert data["artifacts"]["damage_overlay"] is not None
     assert data["artifacts"]["damage_mask"] is not None
 
-    # Verify model readiness explicitly flags untrained status
-    assert "UNTRAINED" in data["model_readiness"]["unet_restoration"]
+    # Verify model readiness explicitly reflects honest state
+    assert data["model_readiness"]["unet_restoration"] in ["READY_FOR_INFERENCE", "UNTRAINED"]
 
 
 def test_restoration_missing_session():

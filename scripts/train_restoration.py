@@ -19,8 +19,9 @@ from src.core.device import get_device, get_device_info, log_system_info
 from src.models.unet_restoration import UNetRestoration
 from src.models.autoencoder import ConvAutoencoder
 from src.models.model_registry import save_checkpoint
-from src.data.vedo_dataset import ManuscriptPairDataset, generate_synthetic_manuscript_sample
+from src.data.vedo_dataset import ManuscriptPairDataset, generate_synthetic_manuscript_sample, collate_manuscript_batch
 from src.data.data_split import split_document_ids, save_split_manifest
+from src.data.combined_dataset import build_unified_dataset_splits, CombinedManuscriptPairDataset
 from src.metrics.restoration_metrics import calculate_psnr, calculate_ssim
 
 
@@ -48,7 +49,15 @@ def train_restoration(
     batch_size: int = 4,
     lr: float = 0.0002,
     num_samples: int = 16,
+    seed: int = 42,
 ) -> Path:
+    # Set seed for reproducibility
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    import numpy as np
+    np.random.seed(seed)
+
     device = get_device(device_name)
     device_info = get_device_info(device)
     log_system_info()
@@ -57,31 +66,36 @@ def train_restoration(
     sample_dir = settings.SAMPLES_DIR
     sample_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Discover or create source manuscript samples
-    image_paths = list(settings.VEDO_DATASET_DIR.rglob("*.png")) + list(settings.VEDO_DATASET_DIR.rglob("*.jpg"))
-    if not image_paths:
-        print(f"[Notice] Raw VedoOCR dataset not found in {settings.VEDO_DATASET_DIR}.")
-        print(f"[Notice] Generating {num_samples} synthetic Devanagari manuscript samples in {sample_dir} for training verification...")
+    # 1. Discover or create source manuscript samples via unified multi-dataset loader
+    splits = build_unified_dataset_splits()
+    train_samples = splits.get("train", [])
+    val_samples = splits.get("val", [])
+
+    if not train_samples:
+        print(f"[Notice] Raw datasets not found. Generating {num_samples} synthetic Devanagari manuscript samples in {sample_dir}...")
         for i in range(num_samples):
             p = sample_dir / f"doc_{i:03d}_page_01.png"
-            generate_synthetic_manuscript_sample(p, seed=42 + i)
+            generate_synthetic_manuscript_sample(p, seed=seed + i)
         image_paths = list(sample_dir.glob("*.png"))
-
-    doc_ids = list(set([p.stem.split("_")[0] for p in image_paths]))
-    splits = split_document_ids(doc_ids, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15)
-    save_split_manifest(splits)
-
-    train_paths = [p for p in image_paths if p.stem.split("_")[0] in splits["train"]]
-    val_paths = [p for p in image_paths if p.stem.split("_")[0] in splits["val"]]
-
-    print(f"Dataset split: {len(train_paths)} train images, {len(val_paths)} val images.")
+        doc_ids = list(set([p.stem.split("_")[0] for p in image_paths]))
+        local_splits = split_document_ids(doc_ids, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15)
+        save_split_manifest(local_splits)
+        train_paths = [p for p in image_paths if p.stem.split("_")[0] in local_splits["train"]]
+        val_paths = [p for p in image_paths if p.stem.split("_")[0] in local_splits["val"]]
+        train_dataset = ManuscriptPairDataset(train_paths, is_training=True)
+        val_dataset = ManuscriptPairDataset(val_paths, is_training=False)
+    else:
+        v_train = len([s for s in train_samples if s.get("source_dataset") == "VedoOCR"])
+        sh_train = len([s for s in train_samples if s.get("source_dataset") == "SanskritHindi_OCR"])
+        v_val = len([s for s in val_samples if s.get("source_dataset") == "VedoOCR"])
+        sh_val = len([s for s in val_samples if s.get("source_dataset") == "SanskritHindi_OCR"])
+        print(f"[Unified Dataset Loaded] Train: {len(train_samples)} (Vedo: {v_train}, SH: {sh_train}) | Val: {len(val_samples)} (Vedo: {v_val}, SH: {sh_val})")
+        train_dataset = CombinedManuscriptPairDataset(train_samples, is_training=True, seed=seed)
+        val_dataset = CombinedManuscriptPairDataset(val_samples, is_training=False, seed=seed)
 
     # DataLoaders
-    train_dataset = ManuscriptPairDataset(train_paths, is_training=True)
-    val_dataset = ManuscriptPairDataset(val_paths, is_training=False)
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_manuscript_batch, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_manuscript_batch, num_workers=0)
 
     # Instantiate Model
     if model_type.lower() == "autoencoder":
