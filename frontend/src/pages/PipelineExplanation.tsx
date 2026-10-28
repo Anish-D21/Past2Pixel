@@ -8,7 +8,6 @@ import {
   GitBranch,
   Layers,
   Cpu,
-  Clock,
   Sparkles,
   AlertCircle,
   HelpCircle,
@@ -789,46 +788,6 @@ export const PipelineExplanation: React.FC = () => {
                 Context-aware damaged text completion was not invoked for this session. It can be triggered on any word from the OCR Extraction workspace.
               </div>
             )}
-          </div>
-
-          {/* SECTION I: Latency & Per-Module Telemetry */}
-          <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-xs space-y-4">
-            <h2 className="font-serif-scholarly font-bold text-lg text-stone-900 border-b border-stone-100 pb-3 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-emerald-800" />
-              <span>Section I: Per-Module Latency Telemetry</span>
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-center text-xs">
-              <div className="p-3 rounded-lg bg-stone-50 border border-stone-100">
-                <div className="text-[10px] text-stone-400 font-bold uppercase">Damage Detector</div>
-                <div className="text-lg font-serif-scholarly font-bold text-stone-900 mt-1">
-                  {timings.damage_detector_ms ? `${timings.damage_detector_ms.toFixed(1)} ms` : '—'}
-                </div>
-              </div>
-              <div className="p-3 rounded-lg bg-stone-50 border border-stone-100">
-                <div className="text-[10px] text-stone-400 font-bold uppercase">U-Net Restoration</div>
-                <div className="text-lg font-serif-scholarly font-bold text-emerald-800 mt-1">
-                  {timings.unet_restoration_ms ? `${timings.unet_restoration_ms.toFixed(1)} ms` : '—'}
-                </div>
-              </div>
-              <div className="p-3 rounded-lg bg-stone-50 border border-stone-100">
-                <div className="text-[10px] text-stone-400 font-bold uppercase">CLAHE Filter</div>
-                <div className="text-lg font-serif-scholarly font-bold text-stone-900 mt-1">
-                  {timings.clahe_enhancement_ms ? `${timings.clahe_enhancement_ms.toFixed(1)} ms` : '—'}
-                </div>
-              </div>
-              <div className="p-3 rounded-lg bg-stone-50 border border-stone-100">
-                <div className="text-[10px] text-stone-400 font-bold uppercase">OCR Extraction</div>
-                <div className="text-lg font-serif-scholarly font-bold text-stone-900 mt-1">
-                  {ocr?.processing_time_ms ? `${ocr.processing_time_ms.toFixed(0)} ms` : '—'}
-                </div>
-              </div>
-              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100">
-                <div className="text-[10px] text-emerald-800 font-bold uppercase">Total Pipeline</div>
-                <div className="text-lg font-serif-scholarly font-bold text-emerald-900 mt-1">
-                  {timings.total_pipeline_ms ? `${timings.total_pipeline_ms.toFixed(0)} ms` : '—'}
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* SECTION J & K: Technical Concepts & Academic Limitations */}

@@ -17,6 +17,7 @@ from ..core.config import settings
 from ..prediction.context_predictor import calculate_cer, calculate_wer
 from .ocr_preprocessor import ocr_preprocessor
 from .ocr_multi_pass import multi_pass_ocr_engine
+from .image_grounded_corrector import image_grounded_corrector
 
 
 class OCREngine:
@@ -170,6 +171,12 @@ class OCREngine:
             "has_hindi_pack": has_hin,
             "has_english_pack": has_eng,
             "missing_languages": [lang for lang in ["san", "hin", "eng"] if lang not in self.available_languages],
+            "secondary_recognition": {
+                "name": "Line-Crop Micro-OCR (PSM 7)",
+                "status": "ACTIVE",
+                "available": True,
+                "notes": "Specialized single-line micro-OCR pass evaluates low-confidence line crops directly.",
+            },
             "reason": reason,
             "setup_instructions": None if status_code == "READY" else self.get_setup_instructions(),
         }
@@ -181,14 +188,22 @@ class OCREngine:
         preprocessing: str = "none",
         mode: str = "multi-pass",
         psm: Optional[int] = None,
+        restored_image: Optional[Union[Image.Image, Path, str]] = None,
+        language: Optional[str] = None,
+        use_multi_pass: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Executes OCR extraction on a document image.
         Supports both Multi-Pass Reconciled extraction (maximum text recovery with line alignment)
-        and targeted single-pass extraction.
+        and targeted single-pass extraction, integrated with Image-Grounded Text Correction.
         Captures execution time, preserves Unicode NFC characters, validates language packs strictly,
         and never silently substitutes English for Sanskrit.
         """
+        if language is not None:
+            lang = language
+        if use_multi_pass is not None:
+            mode = "multi-pass" if use_multi_pass else "single-pass"
+
         status_info = self.get_status()
         if not self.is_installed:
             return {
@@ -231,6 +246,16 @@ class OCREngine:
         else:
             pil_img = image.convert("RGB")
 
+        # Resolve restored reference image if supplied
+        pil_restored = None
+        if restored_image:
+            if isinstance(restored_image, (str, Path)):
+                r_path = Path(restored_image)
+                if r_path.exists():
+                    pil_restored = Image.open(r_path).convert("RGB")
+            elif isinstance(restored_image, Image.Image):
+                pil_restored = restored_image.convert("RGB")
+
         # Validate language pack strictly — never silently substitute English or missing packs
         available_set = set(self.available_languages)
         requested_tokens = [t.strip() for t in lang.split("+") if t.strip()]
@@ -263,26 +288,52 @@ class OCREngine:
             }
 
         effective_lang = "+".join(requested_tokens)
+        orig_dim = [pil_img.width, pil_img.height]
+
+        # ------------------------------------------------------------------
+        # Explicit Preprocessing (If requested)
+        # ------------------------------------------------------------------
+        if preprocessing == "upscale":
+            pil_img = ocr_preprocessor.upscale_2x(pil_img)
+            if pil_restored is not None:
+                pil_restored = ocr_preprocessor.upscale_2x(pil_restored)
+            applied_preproc = "upscale"
+        elif preprocessing in ["contrast", "illumination", "binarize", "deskew"]:
+            pil_img, applied_preproc = ocr_preprocessor.apply_mode(pil_img, mode=preprocessing)
+            if pil_restored is not None:
+                pil_restored, _ = ocr_preprocessor.apply_mode(pil_restored, mode=preprocessing)
+        else:
+            applied_preproc = "none"
 
         # ------------------------------------------------------------------
         # BRANCH A: Multi-Pass Maximum Text Recovery Mode
         # ------------------------------------------------------------------
-        if mode == "multi-pass" and preprocessing in ["none", "auto"]:
+        if mode == "multi-pass":
             res = multi_pass_ocr_engine.extract_reconciled(
                 pil_img,
                 lang=effective_lang,
                 enable_sparse_pass=True,
+                restored_image=pil_restored,
+                force_2x_pass=(preprocessing == "upscale"),
             )
             res["language_requested"] = lang
-            res["preprocessing_applied"] = "multi_pass_reconciled"
+            res["preprocessing_applied"] = applied_preproc if applied_preproc != "none" else "multi_pass_reconciled"
+            res["original_dimensions"] = orig_dim
+            res["processed_dimensions"] = [pil_img.width, pil_img.height]
+            res["super_resolution_applied"] = (preprocessing == "upscale") or res.get("super_resolution_applied", False)
+            res["upscale_factor"] = 2.0 if res["super_resolution_applied"] else 1.0
             return res
 
         # ------------------------------------------------------------------
-        # BRANCH B: Single-Pass Mode (with Border Padding & Configured PSM)
+        # BRANCH B: Single-Pass Mode (with Proportional Border Padding & Configured PSM)
         # ------------------------------------------------------------------
-        processed_img, applied_mode = ocr_preprocessor.apply_mode(pil_img, mode=preprocessing)
-        # Add 30px white border padding to protect characters near image boundaries
-        padded_img = ImageOps.expand(processed_img, border=30, fill="white")
+        processed_img = pil_img
+        applied_mode = applied_preproc
+        img_quality = ocr_preprocessor.evaluate_image_quality(processed_img)
+
+        # Proportional border padding to protect edge glyphs without diluting Otsu thresholding
+        pad_size = min(30, max(4, int(min(processed_img.width, processed_img.height) * 0.08)))
+        padded_img = ImageOps.expand(processed_img, border=pad_size, fill="white") if pad_size > 0 else processed_img
         config_str = f"--psm {psm}" if psm is not None else "--psm 6"
 
         start_t = time.perf_counter()
@@ -309,18 +360,32 @@ class OCREngine:
                 if confs:
                     mean_conf = round(sum(confs) / len(confs), 2)
 
-                # Group into lines
+                # Group into lines with word tokens & bounding boxes
                 lines_map = {}
                 for i in range(len(data.get("text", []))):
                     w_txt = data["text"][i].strip()
                     if w_txt:
                         k = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
-                        if k not in lines_map:
-                            lines_map[k] = {"words": [], "confs": []}
-                        lines_map[k]["words"].append(w_txt)
+                        left = max(0, data["left"][i] - pad_size)
+                        top = max(0, data["top"][i] - pad_size)
+                        w = max(1, data["width"][i])
+                        h = max(1, data["height"][i])
                         c_val = float(data["conf"][i]) if str(data["conf"][i]).replace("-", "").isdigit() else 0.0
+
+                        if k not in lines_map:
+                            lines_map[k] = {"words": [], "word_tokens": [], "confs": [], "left": left, "top": top, "right": left + w, "bottom": top + h}
+                        lines_map[k]["words"].append(w_txt)
+                        lines_map[k]["word_tokens"].append({
+                            "word": w_txt,
+                            "bbox": [left, top, w, h],
+                            "confidence": max(0.0, c_val),
+                        })
                         if c_val >= 0:
                             lines_map[k]["confs"].append(c_val)
+                        lines_map[k]["left"] = min(lines_map[k]["left"], left)
+                        lines_map[k]["top"] = min(lines_map[k]["top"], top)
+                        lines_map[k]["right"] = max(lines_map[k]["right"], left + w)
+                        lines_map[k]["bottom"] = max(lines_map[k]["bottom"], top + h)
 
                 for idx, (k, v) in enumerate(lines_map.items(), start=1):
                     l_str = " ".join(v["words"]).strip()
@@ -331,27 +396,55 @@ class OCREngine:
                             "text": l_str,
                             "mean_confidence": m_c,
                             "pass_name": f"single_pass_{config_str.replace('--', '')}",
-                            "is_uncertain": m_c < 45.0,
+                            "bbox": [v["left"], v["top"], max(1, v["right"] - v["left"]), max(1, v["bottom"] - v["top"])],
+                            "is_uncertain": m_c < 48.0,
+                            "words": v.get("word_tokens", []),
                         })
             except Exception:
                 pass
 
+            # Apply image-grounded text correction
+            correction_result = image_grounded_corrector.correct_document(
+                image=processed_img,
+                lines_detail=lines_detail,
+                restored_image=pil_restored,
+                lang=effective_lang,
+            )
+
             elapsed_ms = round((time.perf_counter() - start_t) * 1000, 2)
             lines_count = len([l for l in clean_text.splitlines() if l.strip()])
+            final_text = correction_result.get("corrected_transcription") or clean_text
 
+            is_sr = (applied_mode == "upscale") or getattr(processed_img, "_is_2x_upscaled", False)
             return {
                 "status": "SUCCESS",
-                "extracted_text": clean_text,
+                "extracted_text": final_text,
+                "raw_extracted_text": clean_text,
+                "corrected_text": final_text,
                 "processing_time_ms": elapsed_ms,
                 "language_requested": lang,
                 "language_used": effective_lang,
-                "character_count": len(clean_text),
-                "word_count": len(clean_text.split()),
+                "character_count": len(final_text),
+                "word_count": len(final_text.split()),
                 "lines_count": lines_count,
+                "original_dimensions": orig_dim,
+                "processed_dimensions": [processed_img.width, processed_img.height],
+                "super_resolution_applied": is_sr,
+                "upscale_factor": 2.0 if is_sr else 1.0,
                 "lines_detail": lines_detail,
+                "words_detail": correction_result.get("words_detail", []),
+                "image_grounded_corrections": correction_result.get("corrections_applied", []),
+                "corrections_count": correction_result.get("corrections_count", 0),
                 "uncertain_lines_count": sum(1 for l in lines_detail if l.get("is_uncertain")),
+                "uncertain_spans_count": correction_result.get("uncertain_spans_count", 0),
                 "mean_confidence": mean_conf,
                 "preprocessing_applied": applied_mode,
+                "image_quality": img_quality,
+                "secondary_model_status": {
+                    "name": "Line-Crop Micro-OCR (PSM 7)",
+                    "status": "STANDBY",
+                    "notes": "Available in multi-pass mode for low-confidence line crops.",
+                },
                 "is_multi_pass": False,
                 "is_authentic_ocr": True,
                 "error": None,
@@ -376,18 +469,22 @@ class OCREngine:
 
     def evaluate_ocr(
         self,
-        predicted_text: str,
-        ground_truth_text: str,
+        predicted_text: Optional[str] = None,
+        ground_truth_text: Optional[str] = None,
+        hypothesis: Optional[str] = None,
+        reference: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Calculates CER and WER metrics against authentic ground truth."""
-        cer = calculate_cer(predicted_text, ground_truth_text)
-        wer = calculate_wer(predicted_text, ground_truth_text)
+        pred = predicted_text if predicted_text is not None else (hypothesis or "")
+        gt = ground_truth_text if ground_truth_text is not None else (reference or "")
+        cer = calculate_cer(pred, gt)
+        wer = calculate_wer(pred, gt)
         return {
             "character_error_rate": cer,
             "word_error_rate": wer,
-            "predicted_char_count": len(predicted_text),
-            "ground_truth_char_count": len(ground_truth_text),
-            "is_exact_match": predicted_text.strip() == ground_truth_text.strip(),
+            "predicted_char_count": len(pred),
+            "ground_truth_char_count": len(gt),
+            "is_exact_match": pred.strip() == gt.strip(),
         }
 
 

@@ -3,9 +3,12 @@ src/ocr/ocr_preprocessor.py
 Controlled, isolated image preprocessing pipeline for Tesseract OCR.
 Generates conservative candidate variants to optimize character recognition without
 modifying, overwriting, or destabilizing manuscript restoration artifacts.
+Includes deskewing, stroke-preserving CLAHE contrast, bilateral denoising,
+illumination flattening, and physical image quality diagnostics.
 """
 from typing import Dict, Any, Tuple, Optional
 import numpy as np
+import cv2
 from PIL import Image, ImageEnhance, ImageFilter
 from scipy.ndimage import gaussian_filter, grey_dilation
 import unicodedata
@@ -17,7 +20,8 @@ logger = logging.getLogger(__name__)
 class OCRPreprocessor:
     """
     Image preprocessing specifically designed for Vedic Sanskrit, Hindi, and English manuscript OCR.
-    Applies non-destructive, conservative transforms to improve glyph separation and contrast.
+    Applies non-destructive, conservative transforms to improve glyph separation and contrast
+    without damaging fine Devanagari matras, conjuncts, or historical ink strokes.
     """
 
     @staticmethod
@@ -26,6 +30,96 @@ class OCRPreprocessor:
         if image.mode != "L":
             return image.convert("L")
         return image
+
+    @staticmethod
+    def clahe_contrast_enhancement(image: Image.Image, clip_limit: float = 2.2, grid_size: int = 8) -> Image.Image:
+        """
+        Enhances local contrast of faded ink strokes using Contrast Limited Adaptive Histogram Equalization.
+        Operates in LAB color space on luminance channel, preserving natural parchment color and stroke fidelity.
+        """
+        rgb_arr = np.array(image.convert("RGB"))
+        lab = cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+
+        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(grid_size, grid_size))
+        l_enhanced = clahe.apply(l_channel)
+
+        merged = cv2.merge([l_enhanced, a_channel, b_channel])
+        enhanced_rgb = cv2.cvtColor(merged, cv2.COLOR_LAB2RGB)
+        return Image.fromarray(enhanced_rgb)
+
+    @staticmethod
+    def stroke_preserving_denoise(image: Image.Image) -> Image.Image:
+        """
+        Applies bilateral filtering to suppress background parchment grain and speckle
+        while strictly preserving high-gradient ink stroke boundaries and fine matras.
+        """
+        rgb_arr = np.array(image.convert("RGB"))
+        # Bilateral filter smooths flat textures while preserving sharp stroke edges
+        denoised = cv2.bilateralFilter(rgb_arr, d=5, sigmaColor=35, sigmaSpace=35)
+        return Image.fromarray(denoised)
+
+    @staticmethod
+    def estimate_and_correct_skew(
+        image: Image.Image, max_angle: float = 12.0, step: float = 0.5
+    ) -> Tuple[Image.Image, float]:
+        """
+        Estimates skew angle of manuscript text lines using horizontal projection profile variance,
+        and deskews the image using high-fidelity bicubic interpolation with white border fill.
+        Returns the deskewed PIL image and the detected skew angle in degrees.
+        """
+        gray = OCRPreprocessor.to_grayscale(image)
+        w, h = gray.size
+        # Downscale for fast and robust skew search if image is very large
+        search_scale = min(1.0, 800.0 / max(w, h))
+        if search_scale < 1.0:
+            sw, sh = int(w * search_scale), int(h * search_scale)
+            search_gray = gray.resize((sw, sh), Image.Resampling.BILINEAR)
+        else:
+            search_gray = gray
+
+        arr = np.array(search_gray, dtype=np.uint8)
+        # Invert so ink strokes are foreground
+        thresh = cv2.adaptiveThreshold(
+            arr, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 8
+        )
+
+        # If image has negligible ink content, no skew rotation
+        ink_pixels = int(np.count_nonzero(thresh))
+        if ink_pixels < 30:
+            return image.convert("RGB"), 0.0
+
+        angles = np.arange(-max_angle, max_angle + step, step)
+        best_angle = 0.0
+        max_variance = -1.0
+        center = (thresh.shape[1] // 2, thresh.shape[0] // 2)
+
+        for a in angles:
+            M = cv2.getRotationMatrix2D(center, float(a), 1.0)
+            rotated = cv2.warpAffine(
+                thresh, M, (thresh.shape[1], thresh.shape[0]),
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0
+            )
+            # Horizontal projection profile: sum across columns
+            proj = np.sum(rotated, axis=1)
+            var = float(np.var(proj))
+            if var > max_variance:
+                max_variance = var
+                best_angle = float(a)
+
+        # Only apply rotation if detected skew is significant (>= 0.5 deg)
+        if abs(best_angle) >= 0.5 and max_variance > 10.0:
+            full_rgb = np.array(image.convert("RGB"))
+            fh, fw = full_rgb.shape[:2]
+            f_center = (fw // 2, fh // 2)
+            M_full = cv2.getRotationMatrix2D(f_center, best_angle, 1.0)
+            corrected_rgb = cv2.warpAffine(
+                full_rgb, M_full, (fw, fh),
+                flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255)
+            )
+            return Image.fromarray(corrected_rgb), best_angle
+
+        return image.convert("RGB"), 0.0
 
     @staticmethod
     def illumination_correction(image: Image.Image) -> Image.Image:
@@ -99,7 +193,44 @@ class OCRPreprocessor:
         return Image.fromarray(binarized, mode="L").convert("RGB")
 
     @staticmethod
-    def upscale_small_text(image: Image.Image, min_dimension: int = 120) -> Image.Image:
+    def upscale_2x(image: Image.Image, method: str = "lanczos") -> Image.Image:
+        """
+        Genuinely upscales the input manuscript image to exactly 2x width and 2x height (2W x 2H).
+        Uses high-fidelity Lanczos/Bicubic resampling with calibrated unsharp masking for stroke definition.
+        Handles RGB, RGBA (composite over white background), and L (grayscale) safely.
+        Avoids excessive ringing or halo artifacts that distort fine character strokes.
+        """
+        if image.mode == "RGBA":
+            bg = Image.new("RGB", image.size, (255, 255, 255))
+            bg.paste(image, mask=image.split()[3])
+            img_to_scale = bg
+        elif image.mode not in ("RGB", "L"):
+            img_to_scale = image.convert("RGB")
+        else:
+            img_to_scale = image
+
+        w, h = img_to_scale.size
+        # Guard against redundant multiple 2x upscaling if image is already huge (>= 3500px)
+        if getattr(image, "_is_2x_upscaled", False) or max(w, h) >= 3500:
+            return img_to_scale
+
+        target_w = w * 2
+        target_h = h * 2
+
+        resample_mode = Image.Resampling.LANCZOS if method == "lanczos" else Image.Resampling.BICUBIC
+        upscaled = img_to_scale.resize((target_w, target_h), resample_mode)
+
+        # Gentle unsharp mask calibrated to sharpen character strokes without ringing/halos
+        # Radius 1.0, 75% unsharp, threshold 2 preserves fine Sanskrit/Devanagari matras
+        sharpened = upscaled.filter(ImageFilter.UnsharpMask(radius=1.0, percent=75, threshold=2))
+        try:
+            sharpened._is_2x_upscaled = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return sharpened
+
+    @staticmethod
+    def upscale_small_text(image: Image.Image, min_dimension: int = 140) -> Image.Image:
         """
         Upscales small line crops or low-DPI scans where stroke width < 2px.
         Tesseract performs significantly better when x-height >= 30-35 pixels.
@@ -117,21 +248,77 @@ class OCRPreprocessor:
         return image
 
     @classmethod
+    def evaluate_image_quality(cls, image: Image.Image) -> Dict[str, Any]:
+        """
+        Computes physical image quality metrics:
+        - Contrast ratio (p95 - p5) / 255
+        - Blur score (Laplacian variance)
+        - Skew angle (in degrees)
+        - Background non-uniformity standard deviation
+        - Recommended preprocessing mode based on measured physical characteristics
+        """
+        gray = cls.to_grayscale(image)
+        arr = np.array(gray, dtype=np.uint8)
+
+        # 1. Blur score via Laplacian variance
+        lap = cv2.Laplacian(arr, cv2.CV_64F)
+        blur_score = round(float(lap.var()), 2)
+
+        # 2. Contrast ratio
+        p5 = float(np.percentile(arr, 5.0))
+        p95 = float(np.percentile(arr, 95.0))
+        contrast_ratio = round((p95 - p5) / 255.0, 3)
+
+        # 3. Background non-uniformity
+        bg_mask = arr > np.median(arr)
+        bg_std = round(float(arr[bg_mask].std()), 2) if bg_mask.any() else 0.0
+
+        # 4. Skew angle
+        _, skew_deg = cls.estimate_and_correct_skew(image, max_angle=10.0)
+
+        # Determine recommendation
+        if min(image.size) < 140:
+            rec_mode = "upscale"
+        elif abs(skew_deg) >= 2.0:
+            rec_mode = "deskew"
+        elif bg_std > 30.0:
+            rec_mode = "illumination"
+        elif contrast_ratio < 0.35:
+            rec_mode = "clahe"
+        else:
+            rec_mode = "contrast"
+
+        return {
+            "blur_score": blur_score,
+            "contrast_ratio": contrast_ratio,
+            "skew_angle_deg": skew_deg,
+            "background_std": bg_std,
+            "width": image.width,
+            "height": image.height,
+            "recommended_mode": rec_mode,
+        }
+
+    @classmethod
     def generate_candidate_variants(cls, image: Image.Image) -> Dict[str, Image.Image]:
         """
         Generates controlled set of preprocessing candidates for a given manuscript image.
+        Never overwrites the original image.
         """
         rgb_img = image.convert("RGB")
+        deskewed_img, _ = cls.estimate_and_correct_skew(rgb_img)
+
         candidates = {
             "none": rgb_img,
-            "contrast": cls.conservative_contrast(rgb_img),
-            "illumination": cls.illumination_correction(rgb_img),
-            "binarize": cls.adaptive_binarization(rgb_img),
+            "deskew": deskewed_img,
+            "contrast": cls.conservative_contrast(deskewed_img),
+            "clahe": cls.clahe_contrast_enhancement(deskewed_img),
+            "illumination": cls.illumination_correction(deskewed_img),
+            "binarize": cls.adaptive_binarization(deskewed_img),
+            "denoised": cls.stroke_preserving_denoise(deskewed_img),
         }
 
-        # If dimensions are small, also include upscaled variant
-        if min(image.size) < 140:
-            candidates["upscale"] = cls.upscale_small_text(candidates["contrast"])
+        # Always include genuine 2x Super-Resolution candidate
+        candidates["upscale"] = cls.upscale_2x(deskewed_img)
 
         return candidates
 
@@ -143,7 +330,7 @@ class OCRPreprocessor:
     ) -> Tuple[Image.Image, str]:
         """
         Applies requested preprocessing mode or selects the safest variant automatically.
-        Supported modes: 'none', 'contrast', 'illumination', 'binarize', 'upscale', 'auto'.
+        Supported modes: 'none', 'contrast', 'clahe', 'illumination', 'binarize', 'upscale', 'deskew', 'auto'.
         """
         clean_mode = (mode or "auto").lower().strip()
         rgb_img = image.convert("RGB")
@@ -152,29 +339,21 @@ class OCRPreprocessor:
             return rgb_img, "none"
         elif clean_mode == "contrast":
             return cls.conservative_contrast(rgb_img), "contrast"
+        elif clean_mode == "clahe":
+            return cls.clahe_contrast_enhancement(rgb_img), "clahe"
+        elif clean_mode == "deskew":
+            deskewed, _ = cls.estimate_and_correct_skew(rgb_img)
+            return deskewed, "deskew"
         elif clean_mode == "illumination":
             return cls.illumination_correction(rgb_img), "illumination"
         elif clean_mode == "binarize":
             return cls.adaptive_binarization(rgb_img), "binarize"
         elif clean_mode == "upscale":
-            return cls.upscale_small_text(cls.conservative_contrast(rgb_img)), "upscale"
+            return cls.upscale_2x(rgb_img), "upscale"
         elif clean_mode == "auto":
-            # Heuristic selection based on image properties:
-            # 1. If very small height (< 120), upscale with contrast enhancement
-            if min(rgb_img.size) < 120:
-                return cls.upscale_small_text(cls.conservative_contrast(rgb_img)), "upscale"
-
-            # 2. Measure background variance to detect uneven staining
-            gray_arr = np.array(cls.to_grayscale(rgb_img), dtype=np.float32)
-            bg_mask = gray_arr > np.median(gray_arr)
-            bg_std = float(gray_arr[bg_mask].std()) if bg_mask.any() else 0.0
-
-            if bg_std > 28.0:
-                # Strong uneven staining: illumination flattening is most beneficial
-                return cls.illumination_correction(rgb_img), "illumination"
-            else:
-                # Moderate/clean background: conservative contrast enhancement
-                return cls.conservative_contrast(rgb_img), "contrast"
+            quality = cls.evaluate_image_quality(rgb_img)
+            rec = quality["recommended_mode"]
+            return cls.apply_mode(rgb_img, mode=rec)
         else:
             return rgb_img, "none"
 

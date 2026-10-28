@@ -184,12 +184,14 @@ export const api = {
   // Context-Aware Linguistic Text Prediction
   prediction: {
     predictText: (data: {
+      sentence?: string;
       left_context?: string;
       right_context?: string;
       uncertain_span?: string;
       full_text?: string;
       span_index?: number;
       max_candidates?: number;
+      allow_multi_word?: boolean;
     }): Promise<TextPredictionResponse> =>
       request<TextPredictionResponse>('/predict-text', {
         method: 'POST',

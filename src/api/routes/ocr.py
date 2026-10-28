@@ -127,7 +127,7 @@ def run_ocr_on_session(
             detail=f"Neither restored folio nor original image found on server for session '{clean_session_id}'.",
         )
 
-    # Run OCR extraction
+    # Run OCR extraction with restored image as supplementary visual evidence
     mode_choice = getattr(req, "mode", "multi-pass") or "multi-pass"
     psm_choice = getattr(req, "psm", None)
     ocr_result = ocr_engine.extract_text(
@@ -136,6 +136,7 @@ def run_ocr_on_session(
         preprocessing=preprocessing_mode,
         mode=mode_choice,
         psm=psm_choice,
+        restored_image=restored_path if restored_path.exists() else None,
     )
     ocr_result["session_id"] = clean_session_id
     ocr_result["image_source"] = image_source
@@ -149,6 +150,8 @@ def run_ocr_on_session(
         session_id=clean_session_id,
         status=ocr_result["status"],
         extracted_text=ocr_result["extracted_text"],
+        raw_extracted_text=ocr_result.get("raw_extracted_text"),
+        corrected_text=ocr_result.get("corrected_text"),
         processing_time_ms=ocr_result["processing_time_ms"],
         language_requested=ocr_result["language_requested"],
         language_used=ocr_result.get("language_used"),
@@ -161,10 +164,21 @@ def run_ocr_on_session(
         image_source=image_source,
         preprocessing_applied=ocr_result.get("preprocessing_applied", "none"),
         lines_detail=ocr_result.get("lines_detail"),
+        words_detail=ocr_result.get("words_detail"),
+        image_grounded_corrections=ocr_result.get("image_grounded_corrections"),
+        corrections_count=ocr_result.get("corrections_count", 0),
         uncertain_lines_count=ocr_result.get("uncertain_lines_count", 0),
         uncertain_lines=ocr_result.get("uncertain_lines"),
+        uncertain_spans_count=ocr_result.get("uncertain_spans_count", 0),
+        image_quality=ocr_result.get("image_quality"),
+        secondary_model_status=ocr_result.get("secondary_model_status"),
+        deskew_applied=ocr_result.get("deskew_applied", False),
         pass_summaries=ocr_result.get("pass_summaries"),
         provenance_breakdown=ocr_result.get("provenance_breakdown"),
+        original_dimensions=ocr_result.get("original_dimensions"),
+        processed_dimensions=ocr_result.get("processed_dimensions"),
+        super_resolution_applied=ocr_result.get("super_resolution_applied", False),
+        upscale_factor=ocr_result.get("upscale_factor", 1.0),
         comparison_results=comparison_results,
         error=ocr_result.get("error"),
         setup_instructions=ocr_result.get("setup_instructions"),
@@ -175,13 +189,13 @@ def run_ocr_on_session(
 async def run_direct_ocr(
     file: UploadFile = File(..., description="Document image file for instant OCR extraction"),
     language: str = Form("san+hin", description="Tesseract language code"),
-    preprocessing: str = Form("none", description="Preprocessing variant: 'none', 'auto', 'contrast', 'illumination', 'binarize', 'upscale'"),
+    preprocessing: str = Form("none", description="Preprocessing variant: 'none', 'auto', 'contrast', 'clahe', 'illumination', 'binarize', 'upscale', 'deskew'"),
     mode: str = Form("multi-pass", description="Extraction mode: 'multi-pass' or 'single-pass'"),
     psm: Optional[int] = Form(None, description="Optional PSM code for single-pass"),
 ):
     """
     Directly extracts machine-readable text from an uploaded image without requiring a session.
-    Supports Multi-Pass Reconciled extraction for maximum text recovery.
+    Supports Multi-Pass Reconciled extraction with physical image grounding.
     """
     contents = await file.read()
     if len(contents) == 0:
@@ -204,6 +218,8 @@ async def run_direct_ocr(
         session_id=None,
         status=ocr_result["status"],
         extracted_text=ocr_result["extracted_text"],
+        raw_extracted_text=ocr_result.get("raw_extracted_text"),
+        corrected_text=ocr_result.get("corrected_text"),
         processing_time_ms=ocr_result["processing_time_ms"],
         language_requested=ocr_result["language_requested"],
         language_used=ocr_result.get("language_used"),
@@ -216,10 +232,21 @@ async def run_direct_ocr(
         image_source="direct_upload",
         preprocessing_applied=ocr_result.get("preprocessing_applied", "none"),
         lines_detail=ocr_result.get("lines_detail"),
+        words_detail=ocr_result.get("words_detail"),
+        image_grounded_corrections=ocr_result.get("image_grounded_corrections"),
+        corrections_count=ocr_result.get("corrections_count", 0),
         uncertain_lines_count=ocr_result.get("uncertain_lines_count", 0),
         uncertain_lines=ocr_result.get("uncertain_lines"),
+        uncertain_spans_count=ocr_result.get("uncertain_spans_count", 0),
+        image_quality=ocr_result.get("image_quality"),
+        secondary_model_status=ocr_result.get("secondary_model_status"),
+        deskew_applied=ocr_result.get("deskew_applied", False),
         pass_summaries=ocr_result.get("pass_summaries"),
         provenance_breakdown=ocr_result.get("provenance_breakdown"),
+        original_dimensions=ocr_result.get("original_dimensions"),
+        processed_dimensions=ocr_result.get("processed_dimensions"),
+        super_resolution_applied=ocr_result.get("super_resolution_applied", False),
+        upscale_factor=ocr_result.get("upscale_factor", 1.0),
         error=ocr_result.get("error"),
         setup_instructions=ocr_result.get("setup_instructions"),
     )

@@ -5,9 +5,12 @@ import {
   OCRResult,
   OCRStatusInfo,
   TextPredictionCandidate,
+  TextPredictionResponse,
   RestorationSession,
   SessionDetailResponse,
   OCRLineDetail,
+  OCRWordDetail,
+  ImageGroundedCorrection,
 } from '../types/api';
 import { StatusBadge } from '../components/StatusBadge';
 import {
@@ -64,8 +67,9 @@ export const OcrExtraction: React.FC = () => {
   const [extractionMode, setExtractionMode] = useState<'multi-pass' | 'single-pass'>('multi-pass');
   const [selectedPsm, setSelectedPsm] = useState<number>(6);
 
-  // Active Workspace Sub-Tab ('transcription' | 'lines' | 'passes')
-  const [activeTab, setActiveTab] = useState<'transcription' | 'lines' | 'passes'>('transcription');
+  // Active Workspace Sub-Tab ('transcription' | 'raw' | 'lines' | 'passes')
+  const [activeTab, setActiveTab] = useState<'transcription' | 'raw' | 'lines' | 'passes'>('transcription');
+  const [inspectedWord, setInspectedWord] = useState<OCRWordDetail | null>(null);
 
   // Engine & Processing State
   const [engineStatus, setEngineStatus] = useState<OCRStatusInfo | null>(null);
@@ -84,11 +88,14 @@ export const OcrExtraction: React.FC = () => {
 
   // Contextual Prediction State (Operates directly on workingText)
   const [selectedWordIndex, setSelectedWordIndex] = useState<number | null>(null);
+  const [inputSentence, setInputSentence] = useState<string>('');
   const [uncertainSpan, setUncertainSpan] = useState<string>('');
   const [leftContext, setLeftContext] = useState<string>('');
   const [rightContext, setRightContext] = useState<string>('');
   const [isPredicting, setIsPredicting] = useState<boolean>(false);
+  const [predictionResponse, setPredictionResponse] = useState<TextPredictionResponse | null>(null);
   const [predictionCandidates, setPredictionCandidates] = useState<TextPredictionCandidate[]>([]);
+  const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number>(0);
   const [predictionDisclaimer, setPredictionDisclaimer] = useState<string | null>(null);
   const [acceptedNotice, setAcceptedNotice] = useState<string | null>(null);
 
@@ -169,9 +176,10 @@ export const OcrExtraction: React.FC = () => {
   // When OCR completes, initialize both raw and working text
   useEffect(() => {
     if (ocrResult?.extracted_text) {
-      setRawOcrText(ocrResult.extracted_text);
-      setWorkingText(ocrResult.extracted_text);
+      setRawOcrText(ocrResult.raw_extracted_text || ocrResult.extracted_text);
+      setWorkingText(ocrResult.corrected_text || ocrResult.extracted_text);
       setSelectedWordIndex(null);
+      setInspectedWord(null);
       setUncertainSpan('');
       setLeftContext('');
       setRightContext('');
@@ -324,30 +332,62 @@ export const OcrExtraction: React.FC = () => {
 
     setLeftContext(left);
     setRightContext(right);
+
+    // Build a sentence window around the selected token
+    const sentenceWindow = [left, word, right].filter(Boolean).join(' ');
+    setInputSentence(sentenceWindow);
+
+    // Look up word token from image-grounded words_detail
+    const matchedWord = ocrResult?.words_detail?.find(
+      (w) => w.token_index === index || w.word === word || w.original_word === word
+    );
+    setInspectedWord(matchedWord || null);
+
     setPredictionCandidates([]);
+    setPredictionResponse(null);
+    setSelectedCandidateIndex(0);
     setPredictionDisclaimer(null);
+  };
+
+  // Replace a word directly from Word Inspector alternative readings
+  const handleApplyWordAlternative = (targetOriginalWord: string, replacementWord: string) => {
+    if (workingText.includes(targetOriginalWord)) {
+      const updated = workingText.replace(targetOriginalWord, replacementWord);
+      setWorkingText(updated);
+      setAcceptedNotice(`Applied image-grounded reading: replaced "${targetOriginalWord}" with "${replacementWord}".`);
+    } else {
+      setWorkingText((prev) => `${prev} ${replacementWord}`.trim());
+      setAcceptedNotice(`Inserted candidate "${replacementWord}" into working text.`);
+    }
+    setInspectedWord(null);
+    setTimeout(() => setAcceptedNotice(null), 4000);
   };
 
   // Trigger Context-Aware Damaged Text Completion
   const handlePredictMissingText = async () => {
-    if (!uncertainSpan.trim() && !leftContext.trim() && !rightContext.trim()) {
-      setError('Please select or specify an uncertain span or surrounding context.');
+    if (!inputSentence.trim() && !uncertainSpan.trim() && !leftContext.trim() && !rightContext.trim()) {
+      setError('Please enter a sentence or specify an uncertain span or context.');
       return;
     }
 
     setIsPredicting(true);
     setAcceptedNotice(null);
+    setError(null);
     try {
       const res = await api.prediction.predictText({
+        sentence: inputSentence.trim() || undefined,
         full_text: workingText,
         uncertain_span: uncertainSpan.trim() || undefined,
         span_index: selectedWordIndex != null ? selectedWordIndex : undefined,
         left_context: leftContext.trim() || undefined,
         right_context: rightContext.trim() || undefined,
-        max_candidates: 4,
+        allow_multi_word: true,
+        max_candidates: 5,
       });
 
+      setPredictionResponse(res);
       setPredictionCandidates(res.candidates || []);
+      setSelectedCandidateIndex(0);
       setPredictionDisclaimer(res.disclaimer);
     } catch (err: any) {
       setError(err.message || 'Linguistic completion prediction failed.');
@@ -356,36 +396,53 @@ export const OcrExtraction: React.FC = () => {
     }
   };
 
-  // Accept a predicted candidate: updates workingText without touching rawOcrText!
-  const handleAcceptCandidate = (candidateWord: string) => {
-    if (selectedWordIndex != null && selectedWordIndex >= 0 && selectedWordIndex < tokens.length) {
+  // Apply reconstructed sentence or candidate word to workingText
+  const handleApplyReconstruction = (chosenCandidateIndex?: number) => {
+    const idx = chosenCandidateIndex !== undefined ? chosenCandidateIndex : selectedCandidateIndex;
+    const candidate = predictionCandidates[idx] || predictionResponse?.candidates?.[0];
+    const candidateWord = candidate?.word || '';
+    const reconstructed = candidate?.reconstructed_sentence || predictionResponse?.reconstructed_sentence;
+    const original = predictionResponse?.original_sentence || inputSentence;
+
+    if (reconstructed && original && workingText.includes(original)) {
+      const updated = workingText.replace(original, reconstructed);
+      setWorkingText(updated);
+      setAcceptedNotice(`Applied reconstructed sentence: "${reconstructed}".`);
+    } else if (reconstructed && workingText.trim() === '') {
+      setWorkingText(reconstructed);
+      setAcceptedNotice(`Applied reconstructed sentence: "${reconstructed}".`);
+    } else if (uncertainSpan && workingText.includes(uncertainSpan) && candidateWord) {
+      const updated = workingText.replace(uncertainSpan, candidateWord);
+      setWorkingText(updated);
+      setAcceptedNotice(`Applied correction: replaced "${uncertainSpan}" with "${candidateWord}".`);
+    } else if (selectedWordIndex != null && selectedWordIndex >= 0 && selectedWordIndex < tokens.length && candidateWord) {
       const originalWord = tokens[selectedWordIndex];
       const newTokens = [...tokens];
       newTokens[selectedWordIndex] = candidateWord;
       const updatedText = newTokens.join('');
       setWorkingText(updatedText);
-      setAcceptedNotice(
-        `Applied correction: replaced "${originalWord}" with linguistic candidate "${candidateWord}".`
-      );
-    } else if (uncertainSpan && workingText.includes(uncertainSpan)) {
-      const updatedText = workingText.replace(uncertainSpan, candidateWord);
-      setWorkingText(updatedText);
-      setAcceptedNotice(
-        `Applied correction: replaced "${uncertainSpan}" with linguistic candidate "${candidateWord}".`
-      );
-    } else {
+      setAcceptedNotice(`Applied correction: replaced "${originalWord}" with "${candidateWord}".`);
+    } else if (reconstructed) {
+      setWorkingText((prev) => (prev ? `${prev}\n${reconstructed}` : reconstructed));
+      setAcceptedNotice(`Added reconstructed sentence: "${reconstructed}".`);
+    } else if (candidateWord) {
       setWorkingText((prev) => `${prev} ${candidateWord}`.trim());
       setAcceptedNotice(`Inserted candidate "${candidateWord}" into working text.`);
     }
 
-    setUncertainSpan(candidateWord);
-    setPredictionCandidates([]);
-    setTimeout(() => setAcceptedNotice(null), 4000);
+    setTimeout(() => setAcceptedNotice(null), 5000);
+  };
+
+  // Accept a predicted candidate word directly
+  const handleAcceptCandidate = (candidateWord: string, candidateIdx: number) => {
+    setSelectedCandidateIndex(candidateIdx);
+    handleApplyReconstruction(candidateIdx);
   };
 
   // Send a line from Line Inspector into Completion
   const handleInspectLineInPredictor = (line: OCRLineDetail) => {
-    setUncertainSpan(line.text);
+    setInputSentence(line.text);
+    setUncertainSpan('[MISSING]');
     const words = line.text.split(/\s+/).filter(Boolean);
     if (words.length > 2) {
       setLeftContext(words.slice(0, 2).join(' '));
@@ -394,6 +451,9 @@ export const OcrExtraction: React.FC = () => {
       setLeftContext(line.text);
       setRightContext('');
     }
+    setPredictionResponse(null);
+    setPredictionCandidates([]);
+    setSelectedCandidateIndex(0);
     setAcceptedNotice(`Loaded line #${line.line_num} into Context-Aware Damaged Text Completion below.`);
     setTimeout(() => setAcceptedNotice(null), 4000);
   };
@@ -709,7 +769,7 @@ export const OcrExtraction: React.FC = () => {
         )}
 
         {/* Strategy & Script Selection Row */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-stone-100">
+        <div className={`grid grid-cols-1 ${extractionMode === 'single-pass' ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 pt-2 border-t border-stone-100`}>
           {/* 1. Language Pack */}
           <div>
             <label className="block text-xs font-medium text-stone-700 mb-1">
@@ -753,34 +813,37 @@ export const OcrExtraction: React.FC = () => {
             </p>
           </div>
 
-          {/* 3. Conditional Preprocessing or PSM */}
-          {extractionMode === 'multi-pass' ? (
-            <div>
-              <label className="block text-xs font-medium text-stone-700 mb-1 flex items-center gap-1.5">
-                <Sliders className="w-3.5 h-3.5 text-stone-500" />
-                <span>Base Preprocessing</span>
-              </label>
-              <select
-                value={preprocessing}
-                onChange={(e) =>
-                  setPreprocessing(
-                    e.target.value as 'none' | 'auto' | 'contrast' | 'illumination' | 'binarize' | 'upscale'
-                  )
-                }
-                className="w-full text-xs border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
-              >
-                <option value="auto">Auto (Evidence-Based Selection)</option>
-                <option value="none">None (Raw Input Image)</option>
-                <option value="contrast">Conservative Contrast Optimization</option>
-                <option value="illumination">Illumination Normalization</option>
-                <option value="binarize">Adaptive Binarization (Sauvola)</option>
-                <option value="upscale">2× Super-Resolution Upscaling</option>
-              </select>
-              <p className="text-[10px] text-stone-400 mt-1">
-                Complementary passes generated automatically.
-              </p>
-            </div>
-          ) : (
+          {/* 3. Preprocessing (Available for both Multi-Pass and Single-Pass) */}
+          <div>
+            <label className="block text-xs font-medium text-stone-700 mb-1 flex items-center gap-1.5">
+              <Sliders className="w-3.5 h-3.5 text-stone-500" />
+              <span>Image Preprocessing</span>
+            </label>
+            <select
+              value={preprocessing}
+              onChange={(e) =>
+                setPreprocessing(
+                  e.target.value as 'none' | 'auto' | 'contrast' | 'illumination' | 'binarize' | 'upscale'
+                )
+              }
+              className="w-full text-xs border border-stone-300 rounded-lg p-2.5 bg-stone-50 focus:ring-2 focus:ring-emerald-700"
+            >
+              <option value="auto">Auto (Evidence-Based Selection)</option>
+              <option value="none">None (Raw Input Image)</option>
+              <option value="contrast">Conservative Contrast Optimization</option>
+              <option value="illumination">Illumination Normalization</option>
+              <option value="binarize">Adaptive Binarization (Sauvola)</option>
+              <option value="upscale">2× Super-Resolution Upscaling</option>
+            </select>
+            <p className="text-[10px] text-stone-400 mt-1">
+              {preprocessing === 'upscale'
+                ? 'High-fidelity 2× Lanczos resampling with stroke preservation.'
+                : 'Adaptive enhancement for historical manuscript scans.'}
+            </p>
+          </div>
+
+          {/* 4. Page Segmentation (PSM) for Single-Pass */}
+          {extractionMode === 'single-pass' && (
             <div>
               <label className="block text-xs font-medium text-stone-700 mb-1 flex items-center gap-1.5">
                 <Sliders className="w-3.5 h-3.5 text-stone-500" />
@@ -984,6 +1047,18 @@ export const OcrExtraction: React.FC = () => {
                       </span>
                     )}
 
+                    {(ocrResult.super_resolution_applied || ocrResult.preprocessing_applied === 'upscale') && (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-emerald-700" />
+                        <span>2× Super-Resolution</span>
+                        {ocrResult.original_dimensions && ocrResult.processed_dimensions && (
+                          <span className="font-mono text-[10px] text-emerald-800">
+                            ({ocrResult.original_dimensions[0]}×{ocrResult.original_dimensions[1]} → {ocrResult.processed_dimensions[0]}×{ocrResult.processed_dimensions[1]})
+                          </span>
+                        )}
+                      </span>
+                    )}
+
                     {isTextModified && (
                       <span className="text-[10px] bg-amber-100 text-amber-900 font-semibold px-2 py-0.5 rounded border border-amber-300">
                         Edited
@@ -1039,8 +1114,8 @@ export const OcrExtraction: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Sub-Tabs: Transcription vs Line Inspector vs Multi-Pass Diagnostic */}
-                <div className="flex items-center gap-2 border-b border-stone-100 pb-2">
+                {/* Sub-Tabs: Transcription vs Raw Audit vs Line Inspector vs Multi-Pass Diagnostic */}
+                <div className="flex flex-wrap items-center gap-2 border-b border-stone-100 pb-2">
                   <button
                     type="button"
                     onClick={() => setActiveTab('transcription')}
@@ -1051,7 +1126,25 @@ export const OcrExtraction: React.FC = () => {
                     }`}
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span>Full Transcription</span>
+                    <span>Corrected Transcription (Image-Supported)</span>
+                    {ocrResult.corrections_count ? (
+                      <span className="text-[10px] bg-emerald-600 text-white px-1.5 py-0.2 rounded-full font-bold">
+                        +{ocrResult.corrections_count}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('raw')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                      activeTab === 'raw'
+                        ? 'bg-emerald-800 text-white shadow-xs'
+                        : 'text-stone-600 hover:bg-stone-100'
+                    }`}
+                  >
+                    <Terminal className="w-3.5 h-3.5" />
+                    <span>Raw OCR Audit Trail</span>
                   </button>
 
                   <button
@@ -1083,7 +1176,7 @@ export const OcrExtraction: React.FC = () => {
                       }`}
                     >
                       <BarChart2 className="w-3.5 h-3.5" />
-                      <span>Pass Breakdown ({Object.keys(ocrResult.pass_summaries).length})</span>
+                      <span>Diagnostics & Quality</span>
                     </button>
                   )}
                 </div>
@@ -1101,17 +1194,34 @@ export const OcrExtraction: React.FC = () => {
                   </div>
                 )}
 
-                {/* TAB 1: FULL TRANSCRIPTION WORKSPACE */}
+                {/* TAB 1: CORRECTED IMAGE-SUPPORTED TRANSCRIPTION */}
                 {activeTab === 'transcription' && (
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between text-xs text-stone-500">
-                      <span className="font-semibold text-stone-700">
-                        Editable Working Transcription (Unicode UTF-8)
-                      </span>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-stone-500">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-stone-800">
+                          Image-Supported Transcription (Editable UTF-8)
+                        </span>
+                        {ocrResult.corrections_count ? (
+                          <span className="text-[10px] bg-emerald-100 text-emerald-900 font-semibold px-2 py-0.5 rounded border border-emerald-300">
+                            ✨ {ocrResult.corrections_count} Image-Grounded Corrections
+                          </span>
+                        ) : null}
+                        {ocrResult.uncertain_spans_count ? (
+                          <span className="text-[10px] bg-amber-100 text-amber-900 font-semibold px-2 py-0.5 rounded border border-amber-300">
+                            ⚠️ {ocrResult.uncertain_spans_count} Flagged for Review
+                          </span>
+                        ) : null}
+                        {ocrResult.deskew_applied ? (
+                          <span className="text-[10px] bg-stone-100 text-stone-700 font-mono px-2 py-0.5 rounded border border-stone-200">
+                            📐 Skew Corrected
+                          </span>
+                        ) : null}
+                      </div>
+
                       <div className="flex items-center gap-3 font-mono text-[11px]">
                         <span>Characters: {workingText.length}</span>
                         <span>Words: {workingText.trim() ? workingText.trim().split(/\s+/).length : 0}</span>
-                        <span>Lines: {ocrResult.lines_count || workingText.split('\n').filter(Boolean).length}</span>
                         {ocrResult.mean_confidence != null && (
                           <span className="text-emerald-800 font-semibold">
                             Confidence: {ocrResult.mean_confidence.toFixed(1)}%
@@ -1128,43 +1238,18 @@ export const OcrExtraction: React.FC = () => {
                       className="w-full p-4 bg-stone-50/50 hover:bg-stone-50 focus:bg-white rounded-lg border border-stone-300 font-serif-scholarly text-stone-900 text-lg leading-relaxed focus:ring-2 focus:ring-emerald-700 transition"
                     />
 
-                    {/* Collapsible Raw Immutable OCR Output */}
-                    {showRawComparison && (
-                      <div className="p-4 bg-stone-100/70 rounded-lg border border-stone-300 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-stone-700 uppercase tracking-wider">
-                              Immutable Raw Tesseract Output
-                            </span>
-                            <span className="text-[10px] bg-stone-200 text-stone-600 px-2 py-0.5 rounded font-mono">
-                              Read-Only Audit Trail
-                            </span>
-                          </div>
-                          <button
-                            onClick={handleCopyRawText}
-                            className="text-xs text-stone-600 hover:text-stone-900 flex items-center gap-1 font-medium"
-                          >
-                            {copiedRaw ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-600" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
-                            <span>{copiedRaw ? 'Copied' : 'Copy Raw'}</span>
-                          </button>
-                        </div>
-                        <pre className="p-3 bg-white rounded border border-stone-200 font-serif-scholarly text-stone-800 text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
-                          {rawOcrText || '(Empty raw OCR output)'}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* Interactive Token Selector for Damaged Text Completion */}
+                    {/* Interactive Folio Word Tokens */}
                     {tokens.filter((t) => /\S/.test(t) && !/^[।॥,;:.!?]+$/.test(t)).length > 0 && (
                       <div className="pt-2 border-t border-stone-100 space-y-2">
-                        <span className="text-xs font-semibold text-stone-700 block">
-                          Interactive Folio Tokens (Click a word or damaged glyph to predict):
-                        </span>
-                        <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-2 bg-stone-50 rounded-lg border border-stone-200">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-stone-700 block">
+                            Interactive Folio Tokens (Click any token to inspect visual crop & confidence):
+                          </span>
+                          <span className="text-[10px] text-stone-400">
+                            Green = Verified • Amber = Uncertain • Emerald = Corrected
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2.5 bg-stone-50 rounded-lg border border-stone-200">
                           {tokens.map((token, idx) => {
                             const isWord = /\S/.test(token) && !/^[।॥,;:.!?]+$/.test(token);
                             if (!isWord) {
@@ -1175,28 +1260,203 @@ export const OcrExtraction: React.FC = () => {
                               );
                             }
                             const isSelected = selectedWordIndex === idx;
+                            const wordDetail = ocrResult.words_detail?.find(
+                              (w) => w.token_index === idx || w.word === token || w.original_word === token
+                            );
+                            const isCorrected = wordDetail?.status === 'IMAGE_SUPPORTED_CORRECTION';
+                            const isUncertain = wordDetail?.status === 'UNCERTAIN_REVIEW_NEEDED' || (wordDetail?.confidence ?? 100) < 60;
+                            const isDamaged = wordDetail?.status === 'DAMAGED_UNREADABLE' || token === '[DAMAGED]';
+
+                            let badgeStyle = 'bg-white hover:bg-stone-100 text-stone-800 border-stone-200';
+                            if (isSelected) {
+                              badgeStyle = 'bg-amber-600 text-white font-bold shadow-xs';
+                            } else if (isDamaged) {
+                              badgeStyle = 'bg-rose-100 text-rose-900 border-rose-300 font-bold';
+                            } else if (isCorrected) {
+                              badgeStyle = 'bg-emerald-100 text-emerald-950 border-emerald-300 font-semibold';
+                            } else if (isUncertain) {
+                              badgeStyle = 'bg-amber-100 text-amber-950 border-amber-300 font-semibold';
+                            }
+
                             return (
                               <button
                                 key={idx}
                                 type="button"
                                 onClick={() => handleSelectToken(idx, token)}
-                                className={`px-2.5 py-1 rounded text-xs font-serif-scholarly transition cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-amber-600 text-white font-bold shadow-xs'
-                                    : 'bg-white hover:bg-amber-100 text-stone-800 border border-stone-200'
-                                }`}
+                                className={`px-2 py-0.5 rounded text-xs font-serif-scholarly transition cursor-pointer border flex items-center gap-1 ${badgeStyle}`}
                               >
-                                {token}
+                                {isCorrected && !isSelected && <span className="text-[10px]">✨</span>}
+                                {isUncertain && !isSelected && <span className="text-[10px]">⚠️</span>}
+                                {isDamaged && !isSelected && <span className="text-[10px]">❌</span>}
+                                <span>{token}</span>
                               </button>
                             );
                           })}
                         </div>
                       </div>
                     )}
+
+                    {/* MANUSCRIPT IMAGE PATCH INSPECTOR CARD */}
+                    {inspectedWord && (
+                      <div className="p-4 bg-gradient-to-r from-amber-50/80 via-white to-stone-50 rounded-xl border border-amber-300 shadow-xs space-y-3">
+                        <div className="flex items-center justify-between border-b border-amber-200/80 pb-2">
+                          <div className="flex items-center gap-2">
+                            <Eye className="w-4 h-4 text-amber-700" />
+                            <span className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                              Manuscript Physical Patch Evidence
+                            </span>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                inspectedWord.status === 'IMAGE_SUPPORTED_CORRECTION'
+                                  ? 'bg-emerald-200 text-emerald-950'
+                                  : inspectedWord.status === 'DAMAGED_UNREADABLE'
+                                  ? 'bg-rose-200 text-rose-950'
+                                  : inspectedWord.is_uncertain
+                                  ? 'bg-amber-200 text-amber-950'
+                                  : 'bg-stone-200 text-stone-800'
+                              }`}
+                            >
+                              {inspectedWord.status.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setInspectedWord(null)}
+                            className="text-stone-400 hover:text-stone-700 text-xs font-bold p-1 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                          {/* 1. Visual Crop */}
+                          <div className="flex flex-col items-center justify-center p-2 bg-stone-100 rounded-lg border border-stone-200 min-h-[70px]">
+                            {inspectedWord.patch_metrics?.patch_data_uri ? (
+                              <img
+                                src={inspectedWord.patch_metrics.patch_data_uri}
+                                alt={`Patch for ${inspectedWord.word}`}
+                                className="h-14 max-w-full object-contain rounded bg-white p-1 border border-stone-300"
+                              />
+                            ) : (
+                              <span className="text-[11px] text-stone-400 italic">No image crop available</span>
+                            )}
+                            <div className="flex items-center gap-2 text-[10px] text-stone-500 font-mono mt-1">
+                              <span>
+                                Stroke: {((inspectedWord.patch_metrics?.stroke_density || 0) * 100).toFixed(1)}%
+                              </span>
+                              <span>•</span>
+                              <span>
+                                Contrast: {((inspectedWord.patch_metrics?.contrast_ratio || 0) * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* 2. Reading & Evidence */}
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-base font-bold font-serif-scholarly text-stone-900">
+                                "{inspectedWord.word}"
+                              </span>
+                              <span className="text-xs font-mono font-bold text-emerald-800">
+                                {inspectedWord.confidence.toFixed(1)}% conf
+                              </span>
+                            </div>
+                            {inspectedWord.original_word !== inspectedWord.word && (
+                              <p className="text-[11px] text-stone-500">
+                                Original raw OCR: <del>{inspectedWord.original_word}</del>
+                              </p>
+                            )}
+                            <p className="text-[11px] text-stone-600 italic">
+                              {inspectedWord.evidence || 'Analyzed against manuscript stroke geometry.'}
+                            </p>
+                          </div>
+
+                          {/* 3. Alternative Readings Actions */}
+                          <div className="space-y-2">
+                            {inspectedWord.alternatives && inspectedWord.alternatives.length > 0 ? (
+                              <div className="space-y-1">
+                                <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider block">
+                                  Alternative Multi-Pass Readings:
+                                </span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {inspectedWord.alternatives.map((alt, aIdx) => (
+                                    <button
+                                      key={aIdx}
+                                      type="button"
+                                      onClick={() => handleApplyWordAlternative(inspectedWord.word, alt)}
+                                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300 rounded text-xs font-serif-scholarly transition cursor-pointer shadow-2xs font-semibold"
+                                    >
+                                      Use "{alt}"
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleApplyWordAlternative(inspectedWord.word, '[DAMAGED]')}
+                                className="text-[10px] font-semibold text-rose-800 hover:text-rose-950 bg-rose-50 hover:bg-rose-100 px-2 py-1 rounded border border-rose-200 transition cursor-pointer"
+                              >
+                                Mark as [DAMAGED]
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* TAB 2: LINE-BY-LINE INSPECTOR & PROVENANCE */}
+                {/* TAB 2: RAW OCR AUDIT TRAIL */}
+                {activeTab === 'raw' && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between text-xs text-stone-500">
+                      <div>
+                        <span className="font-semibold text-stone-700">
+                          Immutable Raw Tesseract Extraction Output
+                        </span>
+                        <span className="ml-2 text-[10px] bg-stone-200 text-stone-600 px-2 py-0.5 rounded font-mono">
+                          Read-Only Audit Trail
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleCopyRawText}
+                        className="text-xs text-stone-600 hover:text-stone-900 flex items-center gap-1 font-medium bg-stone-100 hover:bg-stone-200 px-2.5 py-1 rounded transition cursor-pointer"
+                      >
+                        {copiedRaw ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                        <span>{copiedRaw ? 'Copied' : 'Copy Raw Output'}</span>
+                      </button>
+                    </div>
+
+                    <pre className="p-4 bg-stone-50 rounded-lg border border-stone-300 font-serif-scholarly text-stone-900 text-base leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
+                      {rawOcrText || '(Empty raw OCR output)'}
+                    </pre>
+
+                    <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-xs text-stone-600 flex items-center justify-between">
+                      <span>
+                        Preserves original Tesseract character extraction without image-grounded corrections or contextual edits.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleResetToRaw}
+                        className="text-amber-800 font-semibold hover:underline cursor-pointer"
+                      >
+                        Revert Working Text to Raw →
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: LINE-BY-LINE INSPECTOR & PROVENANCE */}
                 {activeTab === 'lines' && (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between text-xs text-stone-600 pb-1">
@@ -1269,47 +1529,127 @@ export const OcrExtraction: React.FC = () => {
                   </div>
                 )}
 
-                {/* TAB 3: MULTI-PASS CONTRIBUTION DIAGNOSTICS */}
-                {activeTab === 'passes' && ocrResult.pass_summaries && (
-                  <div className="space-y-3">
-                    <div className="text-xs text-stone-600">
-                      Multi-pass extraction runs complementary Tesseract Page Segmentation Modes (PSM) and reconciles output into a unified reading order.
-                    </div>
+                {/* TAB 4: PASS BREAKDOWN & DIAGNOSTICS */}
+                {activeTab === 'passes' && (
+                  <div className="space-y-4">
+                    {/* Resolution & Super Resolution Telemetry */}
+                    {(ocrResult.original_dimensions || ocrResult.processed_dimensions) && (
+                      <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-emerald-950">Resolution & Upscaling Provenance:</span>
+                          <span className="font-mono text-emerald-800">
+                            Input: {ocrResult.original_dimensions ? `${ocrResult.original_dimensions[0]}×${ocrResult.original_dimensions[1]} px` : 'N/A'}
+                          </span>
+                          <span>→</span>
+                          <span className="font-mono font-bold text-emerald-900">
+                            OCR Stage: {ocrResult.processed_dimensions ? `${ocrResult.processed_dimensions[0]}×${ocrResult.processed_dimensions[1]} px` : 'N/A'}
+                          </span>
+                        </div>
+                        {ocrResult.super_resolution_applied && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-200 text-emerald-900 font-bold text-[10px] font-mono self-start sm:self-auto">
+                            2.0× Super-Resolution Active
+                          </span>
+                        )}
+                      </div>
+                    )}
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {Object.entries(ocrResult.pass_summaries).map(([pKey, pSumm]) => (
-                        <div
-                          key={pKey}
-                          className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 space-y-2"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-stone-800">
-                              {pSumm.name}
-                            </span>
-                            <span className="text-[11px] font-mono text-stone-500">
-                              {pSumm.processing_time_ms} ms
-                            </span>
+                    {/* Image Quality Diagnostics */}
+                    {ocrResult.image_quality && (
+                      <div className="p-4 bg-stone-50 rounded-xl border border-stone-200 space-y-2">
+                        <span className="text-xs font-bold text-stone-800 uppercase tracking-wider block">
+                          Manuscript Physical Image Quality Diagnostics
+                        </span>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                          <div className="p-2.5 bg-white rounded border border-stone-200">
+                            <div className="text-stone-400 text-[10px]">Contrast Ratio</div>
+                            <div className="font-bold font-mono text-stone-800">
+                              {((ocrResult.image_quality.contrast_ratio || 0) * 100).toFixed(1)}%
+                            </div>
                           </div>
-
-                          <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
-                            <div className="p-2 bg-white rounded border border-stone-200">
-                              <div className="text-stone-400">Lines</div>
-                              <div className="font-bold text-stone-800">{pSumm.lines_count}</div>
+                          <div className="p-2.5 bg-white rounded border border-stone-200">
+                            <div className="text-stone-400 text-[10px]">Blur Score (Laplacian)</div>
+                            <div className="font-bold font-mono text-stone-800">
+                              {ocrResult.image_quality.blur_score ?? 'N/A'}
                             </div>
-                            <div className="p-2 bg-white rounded border border-stone-200">
-                              <div className="text-stone-400">Chars</div>
-                              <div className="font-bold text-stone-800">{pSumm.character_count}</div>
+                          </div>
+                          <div className="p-2.5 bg-white rounded border border-stone-200">
+                            <div className="text-stone-400 text-[10px]">Detected Skew</div>
+                            <div className="font-bold font-mono text-stone-800">
+                              {ocrResult.image_quality.skew_angle_deg != null
+                                ? `${ocrResult.image_quality.skew_angle_deg.toFixed(1)}°`
+                                : '0.0°'}
                             </div>
-                            <div className="p-2 bg-white rounded border border-stone-200">
-                              <div className="text-stone-400">Conf</div>
-                              <div className="font-bold text-emerald-800">
-                                {pSumm.mean_confidence != null ? `${pSumm.mean_confidence}%` : 'N/A'}
-                              </div>
+                          </div>
+                          <div className="p-2.5 bg-white rounded border border-stone-200">
+                            <div className="text-stone-400 text-[10px]">Recommended Mode</div>
+                            <div className="font-bold text-emerald-800 uppercase">
+                              {ocrResult.image_quality.recommended_mode || 'Auto'}
                             </div>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    )}
+
+                    {/* Secondary Model Status */}
+                    {ocrResult.secondary_model_status && (
+                      <div className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-200 text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-emerald-950">
+                            Secondary Recognition Engine: {ocrResult.secondary_model_status.name}
+                          </span>
+                          <span className="text-[10px] bg-emerald-200 text-emerald-900 font-bold px-2 py-0.5 rounded font-mono">
+                            {ocrResult.secondary_model_status.status}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-emerald-900/80">
+                          {ocrResult.secondary_model_status.notes}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Pass summaries */}
+                    {ocrResult.pass_summaries && (
+                      <div className="space-y-2">
+                        <div className="text-xs text-stone-600">
+                          Multi-pass extraction runs complementary Tesseract Page Segmentation Modes (PSM) and reconciles output into a unified reading order.
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {Object.entries(ocrResult.pass_summaries).map(([pKey, pSumm]) => (
+                            <div
+                              key={pKey}
+                              className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 space-y-2"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-stone-800">
+                                  {pSumm.name}
+                                </span>
+                                <span className="text-[11px] font-mono text-stone-500">
+                                  {pSumm.processing_time_ms} ms
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+                                <div className="p-2 bg-white rounded border border-stone-200">
+                                  <div className="text-stone-400">Lines</div>
+                                  <div className="font-bold text-stone-800">{pSumm.lines_count}</div>
+                                </div>
+                                <div className="p-2 bg-white rounded border border-stone-200">
+                                  <div className="text-stone-400">Chars</div>
+                                  <div className="font-bold text-stone-800">{pSumm.character_count}</div>
+                                </div>
+                                <div className="p-2 bg-white rounded border border-stone-200">
+                                  <div className="text-stone-400">Conf</div>
+                                  <div className="font-bold text-emerald-800">
+                                    {pSumm.mean_confidence != null ? `${pSumm.mean_confidence}%` : 'N/A'}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1319,20 +1659,86 @@ export const OcrExtraction: React.FC = () => {
       )}
 
       {/* Context-Aware Linguistic Completion (XAI / Preservation) */}
-      <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-xs space-y-4">
-        <div className="border-b border-stone-100 pb-2">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-amber-600" />
-            <h2 className="font-serif-scholarly font-bold text-base text-stone-900">
-              Context-Aware Damaged Text Completion (Linguistic N-Gram)
-            </h2>
+      <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-xs space-y-5">
+        <div className="border-b border-stone-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-amber-600" />
+              <h2 className="font-serif-scholarly font-bold text-base text-stone-900">
+                Context-Aware Damaged Text Completion (Linguistic N-Gram)
+              </h2>
+            </div>
+            <p className="text-xs text-stone-500 mt-0.5">
+              Statistically predicts damaged or obscured characters using authentic Vedic Sanskrit, Classical Hindi, and Historical English corpora.
+            </p>
           </div>
-          <p className="text-xs text-stone-500 mt-1">
-            Statistically predicts obscured characters using authentic Vedic & Hindi corpora (VedoOCR and VQA datasets). Operates directly on the extracted manuscript text above.
-          </p>
+
+          {workingText.trim() && (
+            <button
+              type="button"
+              onClick={() => {
+                const firstSentence = workingText.split(/[।\.\n]/).find((s) => s.trim().length > 0) || workingText;
+                setInputSentence(firstSentence.trim());
+                setUncertainSpan('[MISSING]');
+              }}
+              className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg border border-emerald-200 transition cursor-pointer self-start sm:self-center"
+            >
+              📥 Load from Extracted Text
+            </button>
+          )}
         </div>
 
-        {/* Context Input Grid */}
+        {/* Sentence Input with Placeholder Shortcuts */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-stone-800">
+              Target Sentence (Contains missing, damaged, or uncertain text):
+            </label>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-stone-400">Quick Placeholders:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setInputSentence((prev) => (prev ? `${prev} [MISSING]` : '[MISSING]'));
+                  setUncertainSpan('[MISSING]');
+                }}
+                className="text-[10px] bg-amber-100 hover:bg-amber-200 text-amber-900 font-mono font-bold px-2 py-0.5 rounded cursor-pointer transition"
+              >
+                + [MISSING]
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setInputSentence((prev) => (prev ? `${prev} [DAMAGED]` : '[DAMAGED]'));
+                  setUncertainSpan('[DAMAGED]');
+                }}
+                className="text-[10px] bg-amber-100 hover:bg-amber-200 text-amber-900 font-mono font-bold px-2 py-0.5 rounded cursor-pointer transition"
+              >
+                + [DAMAGED]
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setInputSentence((prev) => (prev ? `${prev} ___` : '___'));
+                  setUncertainSpan('___');
+                }}
+                className="text-[10px] bg-stone-200 hover:bg-stone-300 text-stone-800 font-mono font-bold px-2 py-0.5 rounded cursor-pointer transition"
+              >
+                + ___
+              </button>
+            </div>
+          </div>
+
+          <textarea
+            value={inputSentence}
+            onChange={(e) => setInputSentence(e.target.value)}
+            rows={2}
+            placeholder="e.g. The king [MISSING] the temple. OR The king visited the market. OR धर्मक्षेत्रे [MISSING] समवेता युयुत्सवः"
+            className="w-full text-base font-serif-scholarly border border-stone-300 rounded-lg p-3 bg-stone-50/50 hover:bg-stone-50 focus:bg-white text-stone-900 focus:ring-2 focus:ring-amber-500 transition"
+          />
+        </div>
+
+        {/* Granular Context Input Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-medium text-stone-700 mb-1">
@@ -1342,7 +1748,7 @@ export const OcrExtraction: React.FC = () => {
               type="text"
               value={leftContext}
               onChange={(e) => setLeftContext(e.target.value)}
-              placeholder="e.g. अग्निमीळे पुरोहितं"
+              placeholder="e.g. The king or अग्निमीळे"
               className="w-full text-sm font-serif-scholarly border border-stone-300 rounded-lg p-2.5 bg-stone-50"
             />
           </div>
@@ -1355,7 +1761,7 @@ export const OcrExtraction: React.FC = () => {
               type="text"
               value={uncertainSpan}
               onChange={(e) => setUncertainSpan(e.target.value)}
-              placeholder="e.g. य[?]स्य or uncertain word"
+              placeholder="e.g. [MISSING], [DAMAGED], visited"
               className="w-full text-sm font-serif-scholarly border border-amber-300 rounded-lg p-2.5 bg-amber-50/50 font-bold text-stone-900"
             />
           </div>
@@ -1368,23 +1774,27 @@ export const OcrExtraction: React.FC = () => {
               type="text"
               value={rightContext}
               onChange={(e) => setRightContext(e.target.value)}
-              placeholder="e.g. रत्नधातमम्"
+              placeholder="e.g. the temple or पुरोहितं"
               className="w-full text-sm font-serif-scholarly border border-stone-300 rounded-lg p-2.5 bg-stone-50"
             />
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Action Button */}
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={handlePredictMissingText}
-            disabled={isPredicting || (!uncertainSpan.trim() && !leftContext.trim() && !rightContext.trim())}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-100 rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+            disabled={
+              isPredicting ||
+              (!inputSentence.trim() && !uncertainSpan.trim() && !leftContext.trim() && !rightContext.trim())
+            }
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-stone-800 hover:bg-stone-700 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
           >
             {isPredicting ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Querying Linguistic Corpora...</span>
+                <span>Predicting Linguistic Transitions...</span>
               </>
             ) : (
               <>
@@ -1394,61 +1804,153 @@ export const OcrExtraction: React.FC = () => {
             )}
           </button>
 
-          {uncertainSpan && (
+          {(inputSentence || uncertainSpan) && (
             <span className="text-xs text-stone-500">
-              Target: <strong className="font-serif-scholarly text-stone-800">"{uncertainSpan}"</strong>
+              Active Target:{' '}
+              <strong className="font-serif-scholarly text-stone-800">
+                "{uncertainSpan || inputSentence}"
+              </strong>
             </span>
           )}
         </div>
 
-        {/* Prediction Results & Accept Mechanism */}
-        {predictionCandidates.length > 0 && (
-          <div className="mt-4 p-5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-stone-900 uppercase tracking-wider">
-                Corpus Completion Candidates (Ranked by Transition Probability)
-              </span>
-              <span className="text-[11px] text-amber-800 font-mono">
-                {predictionCandidates.length} suggestions
-              </span>
-            </div>
+        {/* Reconstructed Sentence & Candidate Review Section */}
+        {(predictionResponse || predictionCandidates.length > 0) && (
+          <div className="mt-4 p-5 rounded-xl bg-gradient-to-br from-amber-50/70 via-stone-50 to-emerald-50/40 border border-amber-200 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/70 pb-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-800" />
+                <span className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                  Linguistic N-Gram Reconstruction Result
+                </span>
+                {predictionResponse?.detected_script && (
+                  <span className="text-[10px] bg-stone-200 text-stone-700 px-2 py-0.5 rounded font-mono font-medium">
+                    Script: {predictionResponse.detected_script}
+                  </span>
+                )}
+              </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-              {predictionCandidates.map((c, i) => (
-                <div
-                  key={i}
-                  className="p-3 rounded-lg bg-white border border-amber-300 shadow-xs flex flex-col justify-between space-y-2.5"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-base font-bold font-serif-scholarly text-stone-900">
-                      {c.word}
-                    </span>
-                    <span className="text-xs font-bold text-emerald-800 font-mono">
-                      {(c.score * 100).toFixed(1)}%
-                    </span>
-                  </div>
-
-                  {c.evidence && (
-                    <p className="text-[10px] text-stone-500 italic line-clamp-2">
-                      {c.evidence}
-                    </p>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => handleAcceptCandidate(c.word)}
-                    className="w-full py-1.5 px-2 bg-emerald-800 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+              {predictionResponse?.confidence_score != null ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-stone-500">Confidence:</span>
+                  <span
+                    className={`text-xs font-bold font-mono px-2 py-0.5 rounded ${
+                      predictionResponse.confidence_score >= 0.5
+                        ? 'bg-emerald-100 text-emerald-900'
+                        : 'bg-amber-100 text-amber-900'
+                    }`}
                   >
-                    <Check className="w-3 h-3" />
-                    <span>Accept & Apply</span>
-                  </button>
+                    {(predictionResponse.confidence_score * 100).toFixed(1)}%
+                  </span>
                 </div>
-              ))}
+              ) : (
+                <span className="text-[11px] text-stone-400 italic">Confidence: N/A</span>
+              )}
             </div>
 
+            {/* Display: Original, Predicted Replacement, Reconstructed Sentence */}
+            <div className="grid grid-cols-1 gap-3">
+              {/* 1. Original Sentence */}
+              <div className="p-3 bg-white rounded-lg border border-stone-200">
+                <span className="text-[11px] font-bold text-stone-500 uppercase tracking-wider block mb-1">
+                  Original Sentence / Context:
+                </span>
+                <p className="font-serif-scholarly text-stone-800 text-base">
+                  {predictionResponse?.original_sentence || inputSentence || (
+                    <span className="text-stone-400 italic">No sentence provided</span>
+                  )}
+                </p>
+              </div>
+
+              {/* 2. Predicted Missing / Corrected Text */}
+              <div className="p-3 bg-amber-50/80 rounded-lg border border-amber-300">
+                <span className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block mb-1">
+                  Predicted Missing / Corrected Text:
+                </span>
+                <div className="flex items-center gap-3">
+                  <span className="font-serif-scholarly font-bold text-amber-950 text-xl">
+                    {predictionCandidates[selectedCandidateIndex]?.word ||
+                      predictionResponse?.candidates?.[0]?.word ||
+                      'No prediction available'}
+                  </span>
+                  {predictionCandidates[selectedCandidateIndex]?.score != null && (
+                    <span className="text-xs font-mono font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded">
+                      Prob: {(predictionCandidates[selectedCandidateIndex].score * 100).toFixed(1)}%
+                    </span>
+                  )}
+                  {predictionCandidates[selectedCandidateIndex]?.evidence && (
+                    <span className="text-xs text-stone-500 italic">
+                      ({predictionCandidates[selectedCandidateIndex].evidence})
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* 3. Complete Reconstructed Sentence */}
+              <div className="p-3.5 bg-emerald-50/90 rounded-lg border border-emerald-300">
+                <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider block mb-1">
+                  Complete Reconstructed Sentence:
+                </span>
+                <p className="font-serif-scholarly font-semibold text-emerald-950 text-lg leading-relaxed">
+                  {predictionCandidates[selectedCandidateIndex]?.reconstructed_sentence ||
+                    predictionResponse?.reconstructed_sentence ||
+                    'Reconstruction not generated'}
+                </p>
+              </div>
+            </div>
+
+            {/* Candidate Alternatives Switcher */}
+            {predictionCandidates.length > 1 && (
+              <div className="space-y-1.5 pt-1">
+                <span className="text-[11px] font-bold text-stone-600 block">
+                  Alternative Candidate Replacements (Click to preview and select):
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {predictionCandidates.map((c, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setSelectedCandidateIndex(i)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-serif-scholarly transition cursor-pointer flex items-center gap-2 ${
+                        selectedCandidateIndex === i
+                          ? 'bg-amber-600 text-white font-bold shadow-xs'
+                          : 'bg-white hover:bg-stone-100 text-stone-800 border border-stone-300'
+                      }`}
+                    >
+                      <span>{c.word}</span>
+                      <span
+                        className={`text-[10px] font-mono ${
+                          selectedCandidateIndex === i ? 'text-amber-100' : 'text-stone-400'
+                        }`}
+                      >
+                        {(c.score * 100).toFixed(0)}%
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Apply Correction Button */}
+            <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-amber-200/60">
+              <button
+                type="button"
+                onClick={() => handleApplyReconstruction()}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>Apply Reconstructed Sentence to Extracted Text</span>
+              </button>
+
+              <span className="text-[11px] text-stone-500 italic">
+                Updates working text while preserving original raw OCR audit trail.
+              </span>
+            </div>
+
+            {/* Scholarly Disclaimer */}
             {predictionDisclaimer && (
               <p className="text-[11px] text-amber-900/90 italic pt-2 border-t border-amber-200/80 leading-relaxed">
-                ⚠️ <strong>Scholarly Disclaimer:</strong> {predictionDisclaimer}
+                ⚠️ <strong>Scholarly Note:</strong> {predictionDisclaimer}
               </p>
             )}
           </div>

@@ -150,6 +150,34 @@ export interface RestorationResponse {
   };
 }
 
+export interface OCRWordDetail {
+  word: string;
+  original_word: string;
+  confidence: number;
+  status: 'IMAGE_VERIFIED' | 'IMAGE_SUPPORTED_CORRECTION' | 'UNCERTAIN_REVIEW_NEEDED' | 'DAMAGED_UNREADABLE';
+  is_uncertain: boolean;
+  evidence?: string;
+  alternatives?: string[];
+  line_num?: number;
+  token_index?: number;
+  patch_metrics?: {
+    stroke_density?: number;
+    contrast_ratio?: number;
+    edge_energy?: number;
+    has_visible_ink?: boolean;
+    patch_data_uri?: string | null;
+    bbox?: [number, number, number, number];
+  };
+}
+
+export interface ImageGroundedCorrection {
+  line_num: number;
+  original: string;
+  corrected: string;
+  confidence: number;
+  reason: string;
+}
+
 export interface OCRLineDetail {
   line_num: number;
   text: string;
@@ -157,6 +185,7 @@ export interface OCRLineDetail {
   pass_name: string;
   bbox?: [number, number, number, number] | null;
   is_uncertain?: boolean;
+  words?: OCRWordDetail[] | null;
   alternate_readings?: Array<{
     text: string;
     pass_name: string;
@@ -168,6 +197,8 @@ export interface OCRResult {
   session_id?: string | null;
   status: 'SUCCESS' | 'UNAVAILABLE' | 'FAILED' | 'IMAGE_NOT_FOUND' | 'NO_LANGUAGE_DATA' | 'MISSING_LANGUAGE_PACK';
   extracted_text: string;
+  raw_extracted_text?: string | null;
+  corrected_text?: string | null;
   processing_time_ms: number;
   language_requested: string;
   language_used?: string | null;
@@ -180,8 +211,26 @@ export interface OCRResult {
   image_source?: string | null;
   preprocessing_applied?: string | null;
   lines_detail?: OCRLineDetail[] | null;
+  words_detail?: OCRWordDetail[] | null;
+  image_grounded_corrections?: ImageGroundedCorrection[] | null;
+  corrections_count?: number;
   uncertain_lines_count?: number;
   uncertain_lines?: OCRLineDetail[] | null;
+  uncertain_spans_count?: number;
+  image_quality?: {
+    blur_score?: number;
+    contrast_ratio?: number;
+    skew_angle_deg?: number;
+    background_std?: number;
+    recommended_mode?: string;
+  } | null;
+  secondary_model_status?: {
+    name: string;
+    status: string;
+    neural_model_installed?: boolean;
+    notes?: string;
+  } | null;
+  deskew_applied?: boolean;
   pass_summaries?: Record<
     string,
     {
@@ -193,6 +242,10 @@ export interface OCRResult {
     }
   > | null;
   provenance_breakdown?: Record<string, number> | null;
+  original_dimensions?: [number, number] | null;
+  processed_dimensions?: [number, number] | null;
+  super_resolution_applied?: boolean;
+  upscale_factor?: number;
   comparison_results?: Record<
     string,
     {
@@ -221,6 +274,12 @@ export interface OCRStatusInfo {
   has_sanskrit_pack: boolean;
   has_hindi_pack: boolean;
   has_english_pack?: boolean;
+  secondary_recognition?: {
+    name: string;
+    status: string;
+    available: boolean;
+    notes?: string;
+  } | null;
   reason: string;
   setup_instructions?: Record<string, any> | null;
 }
@@ -229,11 +288,15 @@ export interface TextPredictionCandidate {
   word: string;
   score: number;
   evidence?: string | null;
+  reconstructed_sentence?: string | null;
 }
 
 export interface TextPredictionResponse {
   status: string;
   prediction?: string | null;
+  confidence_score?: number | null;
+  original_sentence?: string | null;
+  reconstructed_sentence?: string | null;
   candidates: TextPredictionCandidate[];
   is_speculative: boolean;
   uncertainty_label: string;
@@ -243,6 +306,7 @@ export interface TextPredictionResponse {
     right_context: string;
     uncertain_span?: string;
   };
+  detected_script?: string | null;
 }
 
 export interface SessionSummary {
